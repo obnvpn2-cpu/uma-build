@@ -1,0 +1,283 @@
+{
+  "model_id": "c9d5d994",
+  "summary": {
+    "roi": 6.4,
+    "total_return": 10640,
+    "total_bet": 10000,
+    "profit": 640,
+    "hit_rate": 19.0,
+    "n_hits": 19,
+    "n_bets": 100,
+    "n_races": 100,
+    "reliability_stars": 1
+  },
+  "feature_importance": [
+    {
+      "feature": "horse_recent5_avg",
+      "importance": 1567.4672074913979
+    },
+    {
+      "feature": "trainer_win_rate",
+      "importance": 1185.1672934889793
+    },
+    {
+      "feature": "body_weight",
+      "importance": 1036.389688104391
+    },
+    {
+      "feature": "horse_avg_corner4",
+      "importance": 877.0820674300194
+    },
+    {
+      "feature": "damsire_group",
+      "importance": 588.8088139593601
+    },
+    {
+      "feature": "sire_group",
+      "importance": 483.7017982006073
+    },
+    {
+      "feature": "distance",
+      "importance": 481.48606276512146
+    },
+    {
+      "feature": "jockey_recent20_win_rate",
+      "importance": 439.2821895480156
+    },
+    {
+      "feature": "trainer_recent20_win_rate",
+      "importance": 322.17944580316544
+    }
+  ],
+  "condition_breakdown": [
+    {
+      "surface": "ダート",
+      "track_condition": "不良",
+      "surface_code": 2,
+      "track_condition_code": 4,
+      "n_bets": 11,
+      "n_hits": 5,
+      "hit_rate": 45.45,
+      "roi": 119.09,
+      "profit": 1310
+    },
+    {
+      "surface": "ダート",
+      "track_condition": "重",
+      "surface_code": 2,
+      "track_condition_code": 3,
+      "n_bets": 12,
+      "n_hits": 3,
+      "hit_rate": 25.0,
+      "roi": 110.0,
+      "profit": 1320
+    },
+    {
+      "surface": "芝",
+      "track_condition": "不良",
+      "surface_code": 1,
+      "track_condition_code": 4,
+      "n_bets": 17,
+      "n_hits": 5,
+      "hit_rate": 29.41,
+      "roi": 56.47,
+      "profit": 960
+    },
+    {
+      "surface": "ダート",
+      "track_condition": "稍重",
+      "surface_code": 2,
+      "track_condition_code": 2,
+      "n_bets": 14,
+      "n_hits": 2,
+      "hit_rate": 14.29,
+      "roi": 4.29,
+      "profit": 60
+    },
+    {
+      "surface": "芝",
+      "track_condition": "良",
+      "surface_code": 1,
+      "track_condition_code": 1,
+      "n_bets": 11,
+      "n_hits": 1,
+      "hit_rate": 9.09,
+      "roi": -34.55,
+      "profit": -380
+    },
+    {
+      "surface": "ダート",
+      "track_condition": "良",
+      "surface_code": 2,
+      "track_condition_code": 1,
+      "n_bets": 15,
+      "n_hits": 2,
+      "hit_rate": 13.33,
+      "roi": -60.67,
+      "profit": -910
+    },
+    {
+      "surface": "芝",
+      "track_condition": "稍重",
+      "surface_code": 1,
+      "track_condition_code": 2,
+      "n_bets": 9,
+      "n_hits": 1,
+      "hit_rate": 11.11,
+      "roi": -68.89,
+      "profit": -620
+    },
+    {
+      "surface": "芝",
+      "track_condition": "重",
+      "surface_code": 1,
+      "track_condition_code": 3,
+      "n_bets": 11,
+      "n_hits": 0,
+      "hit_rate": 0.0,
+      "roi": -100.0,
+      "profit": -1100
+    }
+  ],
+  "yearly_breakdown": [
+    {
+      "year": 2024,
+      "n_bets": 100,
+      "n_hits": 19,
+      "hit_rate": 19.0,
+      "roi": 6.4,
+      "profit": 640
+    }
+  ],
+  "distance_breakdown": [
+    {
+      "distance_category": "マイル(~1600m)",
+      "n_bets": 21,
+      "n_hits": 5,
+      "hit_rate": 23.81,
+      "roi": 59.05,
+      "profit": 1240
+    },
+    {
+      "distance_category": "中距離(~2000m)",
+      "n_bets": 18,
+      "n_hits": 5,
+      "hit_rate": 27.78,
+      "roi": 26.67,
+      "profit": 480
+    },
+    {
+      "distance_category": "短距離(~1200m)",
+      "n_bets": 18,
+      "n_hits": 3,
+      "hit_rate": 16.67,
+      "roi": 18.89,
+      "profit": 340
+    },
+    {
+      "distance_category": "長距離(2500m~)",
+      "n_bets": 24,
+      "n_hits": 4,
+      "hit_rate": 16.67,
+      "roi": -17.5,
+      "profit": -420
+    },
+    {
+      "distance_category": "中長距離(~2400m)",
+      "n_bets": 19,
+      "n_hits": 2,
+      "hit_rate": 10.53,
+      "roi": -52.63,
+      "profit": -1000
+    }
+  ],
+  "calibration": [
+    {
+      "bin": "(0.022199999999999998, 0.0296]",
+      "predicted_avg": 0.0269,
+      "actual_avg": 0.0143,
+      "count": 140
+    },
+    {
+      "bin": "(0.0296, 0.0351]",
+      "predicted_avg": 0.0325,
+      "actual_avg": 0.0216,
+      "count": 139
+    },
+    {
+      "bin": "(0.0351, 0.0414]",
+      "predicted_avg": 0.0382,
+      "actual_avg": 0.036,
+      "count": 139
+    },
+    {
+      "bin": "(0.0414, 0.049]",
+      "predicted_avg": 0.0451,
+      "actual_avg": 0.0647,
+      "count": 139
+    },
+    {
+      "bin": "(0.049, 0.0577]",
+      "predicted_avg": 0.0533,
+      "actual_avg": 0.0504,
+      "count": 139
+    },
+    {
+      "bin": "(0.0577, 0.0674]",
+      "predicted_avg": 0.0623,
+      "actual_avg": 0.0576,
+      "count": 139
+    },
+    {
+      "bin": "(0.0674, 0.0777]",
+      "predicted_avg": 0.0721,
+      "actual_avg": 0.0942,
+      "count": 138
+    },
+    {
+      "bin": "(0.0777, 0.0955]",
+      "predicted_avg": 0.0857,
+      "actual_avg": 0.0786,
+      "count": 140
+    },
+    {
+      "bin": "(0.0955, 0.126]",
+      "predicted_avg": 0.1093,
+      "actual_avg": 0.1295,
+      "count": 139
+    },
+    {
+      "bin": "(0.126, 0.33]",
+      "predicted_avg": 0.1604,
+      "actual_avg": 0.1583,
+      "count": 139
+    }
+  ],
+  "train_metrics": {
+    "best_iteration": 24,
+    "best_val_logloss": 0.2420799696090415,
+    "n_features": 9,
+    "n_train": 5564,
+    "n_val": 1391
+  },
+  "meta": {
+    "n_features": 9,
+    "feature_names": [
+      "body_weight",
+      "horse_avg_corner4",
+      "trainer_win_rate",
+      "trainer_recent20_win_rate",
+      "sire_group",
+      "distance",
+      "horse_recent5_avg",
+      "jockey_recent20_win_rate",
+      "damsire_group"
+    ],
+    "n_train": 5564,
+    "n_val": 1391,
+    "data_years": 2,
+    "target_col": "target_win",
+    "elapsed_sec": 388.9,
+    "total_elapsed_sec": 389.0
+  }
+}

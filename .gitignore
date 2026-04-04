@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+*.egg
+
+# Data
+backend/data/*.db
+backend/trained_models/*.txt
+backend/trained_models/*.pkl
+backend/trained_models/*.json
+
+# Node
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# Environment
+.env
+.env.local
+.env.production
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

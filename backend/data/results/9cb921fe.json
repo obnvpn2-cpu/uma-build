@@ -1,0 +1,343 @@
+{
+  "model_id": "9cb921fe",
+  "summary": {
+    "roi": 545.5,
+    "total_return": 64550,
+    "total_bet": 10000,
+    "profit": 54550,
+    "hit_rate": 98.0,
+    "n_hits": 98,
+    "n_bets": 100,
+    "n_races": 100,
+    "reliability_stars": 1
+  },
+  "feature_importance": [
+    {
+      "feature": "umaban",
+      "importance": 21970.23810581147
+    },
+    {
+      "feature": "waku",
+      "importance": 1412.7870572914253
+    },
+    {
+      "feature": "trainer_dist_win_rate",
+      "importance": 6.984357245687079
+    },
+    {
+      "feature": "horse_avg_corner4",
+      "importance": 5.953571967296739
+    },
+    {
+      "feature": "horse_avg_last3f",
+      "importance": 5.528914332204522
+    },
+    {
+      "feature": "horse_total_prize",
+      "importance": 3.7082497586984573
+    },
+    {
+      "feature": "horse_last_finish",
+      "importance": 2.517635403397435
+    },
+    {
+      "feature": "body_weight",
+      "importance": 2.1722313043516124
+    },
+    {
+      "feature": "horse_in3_rate",
+      "importance": 1.7274055257439613
+    },
+    {
+      "feature": "horse_recent3_avg",
+      "importance": 0.8448427496841759
+    },
+    {
+      "feature": "weight_carried",
+      "importance": 0.6478152230737351
+    },
+    {
+      "feature": "horse_surface_win_rate",
+      "importance": 0.24038399755954742
+    },
+    {
+      "feature": "weight_diff",
+      "importance": 0.2235863354758294
+    },
+    {
+      "feature": "damsire_group",
+      "importance": 0.21893996696644535
+    },
+    {
+      "feature": "trainer_win_rate",
+      "importance": 0.07853428059024736
+    },
+    {
+      "feature": "jockey_win_rate",
+      "importance": 0.0005568286302235492
+    },
+    {
+      "feature": "horse_avg_finish",
+      "importance": 0.0005229268081166083
+    },
+    {
+      "feature": "jockey_recent20_win_rate",
+      "importance": 0.00011338630065438338
+    },
+    {
+      "feature": "horse_days_since_last",
+      "importance": 8.991170034278184e-05
+    },
+    {
+      "feature": "field_size",
+      "importance": 8.898780231447745e-05
+    }
+  ],
+  "condition_breakdown": [
+    {
+      "surface": "芝",
+      "track_condition": "良",
+      "surface_code": 1,
+      "track_condition_code": 1,
+      "n_bets": 11,
+      "n_hits": 11,
+      "hit_rate": 100.0,
+      "roi": 676.36,
+      "profit": 7440
+    },
+    {
+      "surface": "芝",
+      "track_condition": "重",
+      "surface_code": 1,
+      "track_condition_code": 3,
+      "n_bets": 11,
+      "n_hits": 11,
+      "hit_rate": 100.0,
+      "roi": 662.73,
+      "profit": 7290
+    },
+    {
+      "surface": "ダート",
+      "track_condition": "稍重",
+      "surface_code": 2,
+      "track_condition_code": 2,
+      "n_bets": 14,
+      "n_hits": 14,
+      "hit_rate": 100.0,
+      "roi": 609.29,
+      "profit": 8530
+    },
+    {
+      "surface": "芝",
+      "track_condition": "稍重",
+      "surface_code": 1,
+      "track_condition_code": 2,
+      "n_bets": 9,
+      "n_hits": 9,
+      "hit_rate": 100.0,
+      "roi": 582.22,
+      "profit": 5240
+    },
+    {
+      "surface": "ダート",
+      "track_condition": "重",
+      "surface_code": 2,
+      "track_condition_code": 3,
+      "n_bets": 12,
+      "n_hits": 12,
+      "hit_rate": 100.0,
+      "roi": 517.5,
+      "profit": 6210
+    },
+    {
+      "surface": "ダート",
+      "track_condition": "不良",
+      "surface_code": 2,
+      "track_condition_code": 4,
+      "n_bets": 11,
+      "n_hits": 11,
+      "hit_rate": 100.0,
+      "roi": 510.91,
+      "profit": 5620
+    },
+    {
+      "surface": "芝",
+      "track_condition": "不良",
+      "surface_code": 1,
+      "track_condition_code": 4,
+      "n_bets": 17,
+      "n_hits": 16,
+      "hit_rate": 94.12,
+      "roi": 450.59,
+      "profit": 7660
+    },
+    {
+      "surface": "ダート",
+      "track_condition": "良",
+      "surface_code": 2,
+      "track_condition_code": 1,
+      "n_bets": 15,
+      "n_hits": 14,
+      "hit_rate": 93.33,
+      "roi": 437.33,
+      "profit": 6560
+    }
+  ],
+  "yearly_breakdown": [
+    {
+      "year": 2024,
+      "n_bets": 100,
+      "n_hits": 98,
+      "hit_rate": 98.0,
+      "roi": 545.5,
+      "profit": 54550
+    }
+  ],
+  "distance_breakdown": [
+    {
+      "distance_category": "中長距離(~2400m)",
+      "n_bets": 19,
+      "n_hits": 19,
+      "hit_rate": 100.0,
+      "roi": 622.11,
+      "profit": 11820
+    },
+    {
+      "distance_category": "マイル(~1600m)",
+      "n_bets": 21,
+      "n_hits": 21,
+      "hit_rate": 100.0,
+      "roi": 614.76,
+      "profit": 12910
+    },
+    {
+      "distance_category": "短距離(~1200m)",
+      "n_bets": 18,
+      "n_hits": 18,
+      "hit_rate": 100.0,
+      "roi": 535.56,
+      "profit": 9640
+    },
+    {
+      "distance_category": "長距離(2500m~)",
+      "n_bets": 24,
+      "n_hits": 23,
+      "hit_rate": 95.83,
+      "roi": 498.75,
+      "profit": 11970
+    },
+    {
+      "distance_category": "中距離(~2000m)",
+      "n_bets": 18,
+      "n_hits": 17,
+      "hit_rate": 94.44,
+      "roi": 456.11,
+      "profit": 8210
+    }
+  ],
+  "calibration": [
+    {
+      "bin": "(-9.949500000000001e-05, 5.052e-07]",
+      "predicted_avg": 0.0,
+      "actual_avg": 0.0,
+      "count": 297
+    },
+    {
+      "bin": "(5.052e-07, 5.065e-07]",
+      "predicted_avg": 0.0,
+      "actual_avg": 0.0,
+      "count": 127
+    },
+    {
+      "bin": "(5.065e-07, 5.077e-07]",
+      "predicted_avg": 0.0,
+      "actual_avg": 0.0,
+      "count": 134
+    },
+    {
+      "bin": "(5.077e-07, 5.093e-07]",
+      "predicted_avg": 0.0,
+      "actual_avg": 0.0,
+      "count": 138
+    },
+    {
+      "bin": "(5.093e-07, 5.111e-07]",
+      "predicted_avg": 0.0,
+      "actual_avg": 0.0,
+      "count": 139
+    },
+    {
+      "bin": "(5.111e-07, 5.139e-07]",
+      "predicted_avg": 0.0,
+      "actual_avg": 0.0,
+      "count": 139
+    },
+    {
+      "bin": "(5.139e-07, 5.17e-07]",
+      "predicted_avg": 0.0,
+      "actual_avg": 0.0,
+      "count": 220
+    },
+    {
+      "bin": "(5.17e-07, 2.883e-06]",
+      "predicted_avg": 0.0,
+      "actual_avg": 0.0,
+      "count": 58
+    },
+    {
+      "bin": "(2.883e-06, 1.0]",
+      "predicted_avg": 0.705,
+      "actual_avg": 0.705,
+      "count": 139
+    }
+  ],
+  "train_metrics": {
+    "best_iteration": 1000,
+    "best_val_logloss": 1.2544130761763423e-06,
+    "n_features": 31,
+    "n_train": 5564,
+    "n_val": 1391
+  },
+  "meta": {
+    "n_features": 31,
+    "feature_names": [
+      "distance",
+      "surface",
+      "track_condition",
+      "field_size",
+      "waku",
+      "umaban",
+      "age",
+      "weight_carried",
+      "horse_n_starts",
+      "horse_win_rate",
+      "horse_in3_rate",
+      "horse_avg_finish",
+      "horse_dist_win_rate",
+      "horse_surface_win_rate",
+      "horse_recent3_avg",
+      "horse_days_since_last",
+      "horse_last_finish",
+      "body_weight",
+      "weight_diff",
+      "horse_avg_corner4",
+      "horse_avg_last3f",
+      "horse_running_style",
+      "horse_total_prize",
+      "horse_class_change",
+      "jockey_win_rate",
+      "jockey_recent20_win_rate",
+      "trainer_win_rate",
+      "trainer_recent20_win_rate",
+      "sire_group",
+      "damsire_group",
+      "trainer_dist_win_rate"
+    ],
+    "n_train": 5564,
+    "n_val": 1391,
+    "data_years": 2,
+    "target_col": "target_win",
+    "elapsed_sec": 678.9,
+    "total_elapsed_sec": 679.0
+  }
+}
