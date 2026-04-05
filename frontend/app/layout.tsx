@@ -39,7 +39,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ja" className={`dark ${notoSansJP.variable} ${shipporiMincho.variable} ${dmMono.variable}`}>
-      <body className="font-sans antialiased bg-surface text-text-primary min-h-screen flex flex-col">
+      <body className="font-sans antialiased text-text-primary min-h-screen flex flex-col">
         <Providers>
           <Header />
           <main className="flex-1">{children}</main>

@@ -22,9 +22,9 @@ export function Toast({ message, type = "info", duration = 4000, onClose }: Toas
   }, [duration, onClose]);
 
   const colors = {
-    success: "border-success/50 bg-success/10 text-success",
-    error: "border-danger/50 bg-danger/10 text-danger",
-    info: "border-accent/50 bg-accent/10 text-accent",
+    success: "border-success/60 text-success",
+    error: "border-danger/60 text-danger",
+    info: "border-accent/60 text-accent",
   };
 
   return (
@@ -34,7 +34,7 @@ export function Toast({ message, type = "info", duration = 4000, onClose }: Toas
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -20 }}
-          className={`fixed top-16 right-4 z-50 px-4 py-3 rounded-lg border text-sm ${colors[type]}`}
+          className={`glass-sm fixed top-16 right-4 z-50 px-4 py-3 text-sm font-medium ${colors[type]}`}
         >
           {message}
         </motion.div>

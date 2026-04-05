@@ -23,11 +23,11 @@ export function FeatureImportanceChart({ data, isBlurred, categories }: FeatureI
   }
 
   return (
-    <div className="bg-surface-raised border border-surface-border rounded-xl p-4 space-y-3">
+    <div className="glass p-4 space-y-3">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold">特徴量重要度 Top10</h3>
         {isBlurred && (
-          <span className="text-xs px-2 py-0.5 rounded-full bg-accent/10 text-accent border border-accent/20">
+          <span className="text-xs px-2 py-0.5 rounded-full bg-accent/15 text-accent border border-accent/40">
             Pro で詳細表示
           </span>
         )}
@@ -40,10 +40,15 @@ export function FeatureImportanceChart({ data, isBlurred, categories }: FeatureI
               <span className="text-xs text-text-secondary w-32 truncate text-right">
                 {labelMap.get(item.feature) ?? item.feature}
               </span>
-              <div className="flex-1 h-4 bg-surface-overlay rounded overflow-hidden">
+              <div className="flex-1 h-4 bg-white/5 rounded overflow-hidden">
                 <div
-                  className="h-full bg-accent/60 rounded"
-                  style={{ width: `${width}%` }}
+                  className="h-full rounded"
+                  style={{
+                    width: `${width}%`,
+                    background:
+                      "linear-gradient(90deg, #FFF373 0%, #F5E932 60%, #E0D020 100%)",
+                    boxShadow: "0 0 10px rgba(245,233,50,0.35)",
+                  }}
                 />
               </div>
               <span className="text-xs font-mono text-text-muted w-10 text-right">

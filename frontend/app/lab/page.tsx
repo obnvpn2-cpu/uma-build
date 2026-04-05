@@ -50,9 +50,11 @@ export default function LabPage() {
       return;
     }
 
-    await startLearning(Array.from(selectedIds), isPro);
+    const result = await startLearning(Array.from(selectedIds), isPro);
     refresh();
-    setStep(3);
+    if (result.ok) {
+      setStep(3);
+    }
   }, [selectedIds, remaining, startLearning, isPro, refresh]);
 
   const handleStepClick = useCallback(
@@ -70,7 +72,9 @@ export default function LabPage() {
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
       {/* Header */}
       <div className="text-center space-y-1">
-        <h1 className="font-mincho text-2xl font-bold">AI Lab</h1>
+        <h1 className="font-mincho text-2xl font-bold text-glow-yellow text-accent">
+          AI Lab
+        </h1>
         <p className="text-sm text-text-secondary">
           特徴量を選んでAIを学習させましょう
         </p>
@@ -111,14 +115,17 @@ export default function LabPage() {
                 {/* Sticky bottom CTA */}
                 <div className="fixed bottom-0 left-0 right-0 z-40 pointer-events-none">
                   <div className="max-w-4xl mx-auto px-4 pb-4">
-                    <div className="bg-surface-raised/95 backdrop-blur-md border border-surface-border rounded-xl p-3 flex items-center justify-between pointer-events-auto shadow-lg shadow-black/30">
+                    <div className="glass-strong p-3 flex items-center justify-between pointer-events-auto">
                       <span className="text-sm text-text-secondary hidden sm:inline pl-2">
-                        <span className="text-accent font-mono font-bold">{selectedIds.size}</span> 個の特徴量を選択中
+                        <span className="text-accent font-mono font-bold text-glow-yellow">
+                          {selectedIds.size}
+                        </span>{" "}
+                        個の特徴量を選択中
                       </span>
                       <button
                         onClick={() => setStep(2)}
                         disabled={selectedIds.size < 2}
-                        className="px-6 py-2.5 rounded-lg bg-accent text-surface font-semibold hover:bg-accent-dark transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed sm:ml-auto text-sm w-full sm:w-auto"
+                        className="btn-primary px-6 py-2.5 rounded-lg sm:ml-auto text-sm w-full sm:w-auto"
                       >
                         次へ: 学習設定 →
                       </button>
@@ -141,12 +148,19 @@ export default function LabPage() {
             className="space-y-6"
           >
             {/* Summary of selected features */}
-            <div className="bg-surface-raised border border-surface-border rounded-xl p-4 space-y-3">
+            <div className="glass p-4 space-y-3">
               <h3 className="text-sm font-semibold">学習設定</h3>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
                 <div>
                   <p className="text-text-muted text-xs">選択した特徴量</p>
-                  <p className="font-mono text-accent text-lg">{selectedIds.size}個</p>
+                  <p
+                    className="font-mono text-accent text-lg"
+                    style={{
+                      filter: "drop-shadow(0 0 10px rgba(245,233,50,0.5))",
+                    }}
+                  >
+                    {selectedIds.size}個
+                  </p>
                 </div>
                 <div>
                   <p className="text-text-muted text-xs">学習データ期間</p>
@@ -188,7 +202,7 @@ export default function LabPage() {
 
             {/* Error */}
             {error && (
-              <div className="bg-danger/10 border border-danger/30 rounded-lg p-3 text-sm text-danger">
+              <div className="glass-sm p-3 text-sm text-danger border-danger/40">
                 {error}
               </div>
             )}
@@ -196,6 +210,40 @@ export default function LabPage() {
         )}
 
         {/* Step 3: Results */}
+        {step === 3 && !results && (
+          <motion.div
+            key="step3-fallback"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.2 }}
+          >
+            <div className="glass-strong p-8 text-center space-y-4">
+              <div className="text-4xl">⚠️</div>
+              <h3 className="font-mincho text-lg font-bold">
+                結果を取得できませんでした
+              </h3>
+              <p className="text-sm text-text-secondary">
+                {error ?? "もう一度お試しください"}
+              </p>
+              <div className="flex justify-center gap-3 pt-2">
+                <button
+                  onClick={() => setStep(2)}
+                  className="btn-primary px-5 py-2 rounded-lg text-sm cursor-pointer"
+                >
+                  もう一度学習
+                </button>
+                <button
+                  onClick={() => setStep(1)}
+                  className="glass-sm px-5 py-2 text-sm text-text-secondary hover:text-accent transition cursor-pointer"
+                >
+                  特徴量を選び直す
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
         {step === 3 && results && (
           <motion.div
             key="step3"
@@ -241,11 +289,11 @@ export default function LabPage() {
             {/* Distance breakdown (reuse ConditionBreakdown component) */}
             {results.distance_breakdown &&
               results.distance_breakdown.length > 0 && (
-                <div className="bg-surface-raised border border-surface-border rounded-xl p-4 space-y-3">
+                <div className="glass p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <h3 className="text-sm font-semibold">距離別パフォーマンス</h3>
                     {isBlurred && (
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-accent/10 text-accent border border-accent/20">
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-accent/15 text-accent border border-accent/40">
                         Pro で詳細表示
                       </span>
                     )}
@@ -253,7 +301,7 @@ export default function LabPage() {
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead>
-                        <tr className="border-b border-surface-border text-text-muted text-xs">
+                        <tr className="border-b border-white/10 text-text-muted text-xs">
                           <th className="text-left py-2 pr-4">距離</th>
                           <th className="text-right py-2 px-2">購入数</th>
                           <th className="text-right py-2 px-2">的中率</th>
@@ -262,7 +310,7 @@ export default function LabPage() {
                       </thead>
                       <tbody>
                         {results.distance_breakdown.map((item, i) => (
-                          <tr key={i} className="border-b border-surface-border/50">
+                          <tr key={i} className="border-b border-white/5">
                             <td className="py-2 pr-4 text-text-primary">
                               {item.distance_category}
                             </td>
@@ -310,13 +358,13 @@ export default function LabPage() {
             <div className="flex justify-center gap-3 pt-2">
               <button
                 onClick={() => setStep(1)}
-                className="px-4 py-2 rounded-lg border border-surface-border text-text-secondary hover:text-accent hover:border-accent/40 transition text-sm cursor-pointer"
+                className="glass-sm px-4 py-2 text-sm text-text-secondary hover:text-accent transition cursor-pointer"
               >
                 特徴量を変更して再学習
               </button>
               <button
                 onClick={() => setStep(2)}
-                className="px-4 py-2 rounded-lg bg-accent text-surface font-medium hover:bg-accent-dark transition text-sm cursor-pointer"
+                className="btn-primary px-4 py-2 rounded-lg text-sm cursor-pointer"
               >
                 もう一度学習
               </button>

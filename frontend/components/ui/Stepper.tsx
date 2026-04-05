@@ -28,23 +28,25 @@ export function Stepper({ currentStep, onStepClick }: StepperProps) {
                 className="relative w-9 h-9 rounded-full flex items-center justify-center text-sm font-mono font-bold transition-all shrink-0 cursor-pointer"
                 style={{
                   background: isActive
-                    ? "#58A6FF"
+                    ? "linear-gradient(135deg, #FFF373 0%, #F5E932 50%, #E0D020 100%)"
                     : isComplete
-                    ? "rgba(88,166,255,0.15)"
-                    : "#1C2128",
+                    ? "rgba(245,233,50,0.15)"
+                    : "rgba(255,255,255,0.04)",
                   color: isActive
-                    ? "#0D1117"
+                    ? "#0A0A0F"
                     : isComplete
-                    ? "#58A6FF"
-                    : "#7D8590",
+                    ? "#F5E932"
+                    : "#6E6E78",
                   border: isActive
-                    ? "none"
+                    ? "1px solid rgba(245,233,50,0.6)"
                     : isComplete
-                    ? "1px solid rgba(88,166,255,0.4)"
-                    : "1px solid #30363D",
+                    ? "1px solid rgba(245,233,50,0.4)"
+                    : "1px solid rgba(255,255,255,0.1)",
                   boxShadow: isActive
-                    ? "0 0 12px rgba(88,166,255,0.35)"
+                    ? "0 0 24px rgba(245,233,50,0.55), inset 0 1px 0 rgba(255,255,255,0.4)"
                     : "none",
+                  backdropFilter: !isActive ? "blur(10px)" : undefined,
+                  WebkitBackdropFilter: !isActive ? "blur(10px)" : undefined,
                 }}
               >
                 {isComplete ? "\u2713" : step}
@@ -56,8 +58,12 @@ export function Stepper({ currentStep, onStepClick }: StepperProps) {
                     style={{
                       background:
                         step < currentStep
-                          ? "rgba(88,166,255,0.4)"
-                          : "#30363D",
+                          ? "rgba(245,233,50,0.5)"
+                          : "rgba(255,255,255,0.1)",
+                      boxShadow:
+                        step < currentStep
+                          ? "0 0 8px rgba(245,233,50,0.3)"
+                          : "none",
                     }}
                   />
                 </div>

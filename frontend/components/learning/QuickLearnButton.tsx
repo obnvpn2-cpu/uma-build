@@ -17,6 +17,7 @@ export function QuickLearnButton({
   remainingAttempts,
   onClick,
 }: QuickLearnButtonProps) {
+  const isActive = !disabled && !isLoading;
   return (
     <div className="flex flex-col items-center gap-3">
       <motion.button
@@ -24,10 +25,8 @@ export function QuickLearnButton({
         whileTap={!disabled ? { scale: 0.98 } : undefined}
         onClick={onClick}
         disabled={disabled || isLoading}
-        className={`relative px-8 py-4 rounded-xl font-bold text-lg transition-all ${
-          disabled || isLoading
-            ? "bg-surface-overlay text-text-muted cursor-not-allowed border border-surface-border"
-            : "bg-accent text-surface hover:bg-accent-dark pulse-glow border border-accent/50"
+        className={`relative px-8 py-4 rounded-xl text-lg ${
+          isActive ? "btn-primary pulse-glow" : "btn-primary"
         }`}
       >
         {isLoading ? (

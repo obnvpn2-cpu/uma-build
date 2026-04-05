@@ -46,7 +46,9 @@ export default function PricingPage() {
   return (
     <div className="max-w-3xl mx-auto px-4 py-12 space-y-8">
       <div className="text-center space-y-2">
-        <h1 className="font-mincho text-3xl font-bold">料金プラン</h1>
+        <h1 className="font-mincho text-3xl font-bold text-accent text-glow-yellow">
+          料金プラン
+        </h1>
         <p className="text-text-secondary">
           あなただけの競馬AIを、もっと強力に
         </p>
@@ -56,21 +58,34 @@ export default function PricingPage() {
         {plans.map((plan) => (
           <div
             key={plan.name}
-            className={`rounded-xl p-6 space-y-4 ${
-              plan.highlight
-                ? "bg-surface-raised border-2 border-accent/40 relative"
-                : "bg-surface-raised border border-surface-border"
+            className={`p-6 space-y-4 relative ${
+              plan.highlight ? "glass-strong" : "glass"
             }`}
+            style={
+              plan.highlight
+                ? {
+                    boxShadow:
+                      "0 16px 48px rgba(0,0,0,0.55), 0 0 40px rgba(245,233,50,0.3)",
+                  }
+                : undefined
+            }
           >
             {plan.highlight && (
-              <span className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-0.5 rounded-full bg-accent text-surface text-xs font-bold">
+              <span
+                className="btn-primary absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-0.5 rounded-full text-xs font-bold"
+              >
                 おすすめ
               </span>
             )}
             <div>
               <h2 className="font-mincho text-xl font-bold">{plan.name}</h2>
               <div className="flex items-baseline gap-1 mt-1">
-                <span className="text-3xl font-mono font-bold text-accent">
+                <span
+                  className="text-3xl font-mono font-bold text-accent"
+                  style={{
+                    filter: "drop-shadow(0 0 12px rgba(245,233,50,0.5))",
+                  }}
+                >
                   {plan.price === "0" ? "無料" : `¥${plan.price}`}
                 </span>
                 {plan.period && (
@@ -98,8 +113,8 @@ export default function PricingPage() {
               disabled={plan.ctaDisabled}
               className={`w-full py-2 rounded-lg text-sm font-medium transition ${
                 plan.highlight
-                  ? "bg-accent/20 text-accent border border-accent/30 cursor-not-allowed"
-                  : "bg-surface-overlay text-text-muted border border-surface-border cursor-not-allowed"
+                  ? "btn-primary"
+                  : "glass-sm text-text-muted cursor-not-allowed"
               }`}
             >
               {plan.cta}

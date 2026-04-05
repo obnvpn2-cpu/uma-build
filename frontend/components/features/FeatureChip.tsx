@@ -18,11 +18,22 @@ export function FeatureChip({ id, label, description, isSelected, onToggle }: Fe
       whileHover={{ y: -1, scale: 1.03 }}
       whileTap={{ scale: 0.97 }}
       transition={{ type: "spring", stiffness: 400, damping: 25 }}
-      className={`px-3 py-2.5 rounded-full text-sm border cursor-pointer min-h-[44px] transition-colors ${
+      className={`px-3 py-2.5 rounded-full text-sm cursor-pointer min-h-[44px] transition-all ${
         isSelected
-          ? "bg-accent/20 border-accent/50 text-accent shadow-[0_0_8px_rgba(88,166,255,0.15)]"
-          : "bg-surface-overlay border-surface-border text-text-secondary hover:border-text-muted hover:text-text-primary hover:bg-surface-overlay/80"
+          ? "text-surface font-bold border"
+          : "glass-sm text-text-secondary hover:text-text-primary"
       }`}
+      style={
+        isSelected
+          ? {
+              background:
+                "linear-gradient(135deg, #FFF373 0%, #F5E932 50%, #E0D020 100%)",
+              borderColor: "rgba(245,233,50,0.6)",
+              boxShadow:
+                "0 0 18px rgba(245,233,50,0.45), inset 0 1px 0 rgba(255,255,255,0.4)",
+            }
+          : undefined
+      }
     >
       {label}
     </motion.button>

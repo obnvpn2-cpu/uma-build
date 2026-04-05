@@ -14,18 +14,33 @@ export function BacktestSummary({ summary }: BacktestSummaryProps) {
   const stars = summary.reliability_stars ?? 1;
 
   return (
-    <div className="bg-surface-raised border border-surface-border rounded-xl p-6 space-y-4">
-      <h3 className="font-mincho text-lg font-bold">バックテスト結果</h3>
+    <div className="glass-strong p-6 space-y-4">
+      <h3 className="font-mincho text-lg font-bold text-glow-yellow">
+        バックテスト結果
+      </h3>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <div className="space-y-1">
           <p className="text-xs text-text-muted">回収率 (ROI)</p>
-          <p className={`text-2xl font-mono font-bold ${roi >= 100 ? "text-success" : "text-danger"}`}>
+          <p
+            className={`text-2xl font-mono font-bold ${
+              roi >= 100 ? "text-success" : "text-danger"
+            }`}
+            style={{
+              filter:
+                roi >= 100
+                  ? "drop-shadow(0 0 10px rgba(74,222,128,0.5))"
+                  : "drop-shadow(0 0 10px rgba(248,113,113,0.45))",
+            }}
+          >
             {roi.toFixed(1)}%
           </p>
         </div>
         <div className="space-y-1">
           <p className="text-xs text-text-muted">的中率</p>
-          <p className="text-2xl font-mono font-bold text-text-primary">
+          <p
+            className="text-2xl font-mono font-bold text-accent"
+            style={{ filter: "drop-shadow(0 0 10px rgba(245,233,50,0.5))" }}
+          >
             {hitRate.toFixed(1)}%
           </p>
         </div>

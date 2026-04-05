@@ -8,15 +8,23 @@ import type { LearnResponse } from "@/lib/types";
 const POLL_INTERVAL_MS = 3000;
 const MAX_POLL_ATTEMPTS = 120; // 3s × 120 = 6 min max
 
+export type StartLearningResult =
+  | { ok: true; data: LearnResponse }
+  | { ok: false; error: string };
+
 export function useLearning() {
   const [isLoading, setIsLoading] = useState(false);
   const [results, setResults] = useState<LearnResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const startLearning = useCallback(
-    async (selectedFeatures: string[], isPro: boolean = false) => {
+    async (
+      selectedFeatures: string[],
+      isPro: boolean = false
+    ): Promise<StartLearningResult> => {
       setIsLoading(true);
       setError(null);
+      setResults(null);
 
       try {
         const sessionId = getSessionId();
@@ -38,7 +46,7 @@ export function useLearning() {
               setLastModelId(response.model_id);
             }
             incrementDailyAttempts();
-            return;
+            return { ok: true, data: response };
           }
           if (status.status === "failed") {
             throw new Error(status.error || "学習に失敗しました");
@@ -48,6 +56,7 @@ export function useLearning() {
       } catch (err) {
         const message = err instanceof Error ? err.message : "学習に失敗しました";
         setError(message);
+        return { ok: false, error: message };
       } finally {
         setIsLoading(false);
       }

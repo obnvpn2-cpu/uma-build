@@ -9,10 +9,10 @@ export function Header() {
   const isPricing = pathname === "/pricing";
 
   return (
-    <header className="border-b border-surface-border bg-surface-raised/80 backdrop-blur-sm sticky top-0 z-50">
+    <header className="sticky top-0 z-50 border-b border-white/10 bg-black/30 backdrop-blur-xl">
       <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
         <Link href="/lab" className="flex items-center gap-2">
-          <span className="font-mincho text-xl font-bold text-accent">
+          <span className="font-mincho text-xl font-bold text-accent text-glow-yellow">
             UmaBuild
           </span>
           <span className="text-xs text-text-muted hidden sm:inline">
@@ -30,15 +30,16 @@ export function Header() {
           >
             AI Lab
             {isLab && (
-              <span className="absolute -bottom-[17px] left-0 right-0 h-0.5 bg-accent rounded-full" />
+              <span
+                className="absolute -bottom-[17px] left-0 right-0 h-0.5 rounded-full bg-accent"
+                style={{ boxShadow: "0 0 12px rgba(245,233,50,0.6)" }}
+              />
             )}
           </Link>
           <Link
             href="/pricing"
-            className={`text-sm px-3 py-1.5 rounded-full border transition cursor-pointer ${
-              isPricing
-                ? "border-accent bg-accent/15 text-accent font-medium"
-                : "border-accent/30 text-accent hover:bg-accent/10"
+            className={`text-xs font-bold px-3 py-1.5 rounded-full transition cursor-pointer ${
+              isPricing ? "btn-primary" : "btn-primary"
             }`}
           >
             Pro

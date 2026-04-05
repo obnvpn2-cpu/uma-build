@@ -53,11 +53,14 @@ export function FeatureCategoryCard({
   const IconComponent = ICON_MAP[icon];
 
   return (
-    <div className="bg-surface-raised border border-surface-border rounded-xl p-4 space-y-3 flex flex-col min-h-[200px]">
+    <div className="glass glass-hover p-4 space-y-3 flex flex-col min-h-[200px]">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           {IconComponent ? (
-            <IconComponent className="w-5 h-5 text-accent" />
+            <IconComponent
+              className="w-5 h-5 text-accent"
+              style={{ filter: "drop-shadow(0 0 8px rgba(245,233,50,0.55))" }}
+            />
           ) : (
             <span className="text-lg">{icon}</span>
           )}
@@ -70,7 +73,7 @@ export function FeatureCategoryCard({
           <span
             className={`text-xs font-mono px-2 py-0.5 rounded-full transition-colors ${
               selectedCount > 0
-                ? "bg-accent/15 text-accent border border-accent/30"
+                ? "bg-accent/15 text-accent border border-accent/40"
                 : "text-text-muted"
             }`}
           >
@@ -78,7 +81,7 @@ export function FeatureCategoryCard({
           </span>
           <button
             onClick={() => onToggleAll(id, featureIds, !allSelected)}
-            className="text-xs px-3 py-2 rounded border border-surface-border text-text-secondary hover:text-accent hover:border-accent/40 transition cursor-pointer min-h-[36px]"
+            className="glass-sm text-xs px-3 py-2 text-text-secondary hover:text-accent transition cursor-pointer min-h-[36px]"
           >
             {allSelected ? "全OFF" : "全ON"}
           </button>

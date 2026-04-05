@@ -2,7 +2,7 @@
 
 export function Footer() {
   return (
-    <footer className="border-t border-surface-border bg-surface-raised/50 mt-auto">
+    <footer className="border-t border-white/10 bg-black/20 backdrop-blur-xl mt-auto">
       <div className="max-w-6xl mx-auto px-4 py-6">
         <div className="text-xs text-text-muted space-y-2">
           <p className="font-bold text-text-secondary">免責事項</p>
@@ -11,11 +11,9 @@ export function Footer() {
             馬券の購入はご自身の判断と責任で行ってください。
             過去のデータに基づく分析結果は将来の結果を保証するものではありません。
           </p>
-          <p>
-            競馬はギャンブルです。必ず余裕資金の範囲内でお楽しみください。
-          </p>
+          <p>競馬はギャンブルです。必ず余裕資金の範囲内でお楽しみください。</p>
           <div className="pt-3 flex items-center justify-between">
-            <span className="font-mincho text-text-secondary">
+            <span className="font-mincho text-accent text-glow-yellow">
               UmaBuild
             </span>
             <span>&copy; {new Date().getFullYear()} UmaBuild</span>

@@ -19,10 +19,14 @@ export function RemainingAttempts({ used, max, isPro }: RemainingAttemptsProps) 
         </span>
         <span className="text-text-muted">/ {max}</span>
       </div>
-      <div className="w-16 h-1.5 bg-surface-overlay rounded-full overflow-hidden">
+      <div className="w-16 h-1.5 bg-white/5 rounded-full overflow-hidden">
         <div
           className={`h-full rounded-full transition-all ${ratio >= 0.8 ? "bg-danger" : ratio >= 0.5 ? "bg-warning" : "bg-accent"}`}
-          style={{ width: `${ratio * 100}%` }}
+          style={{
+            width: `${ratio * 100}%`,
+            boxShadow:
+              ratio < 0.5 ? "0 0 8px rgba(245,233,50,0.5)" : undefined,
+          }}
         />
       </div>
       {!isPro && remaining <= 1 && (

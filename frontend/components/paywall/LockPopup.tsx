@@ -11,7 +11,7 @@ export function LockPopup({ lockedFeatures }: LockPopupProps) {
   if (!lockedFeatures.length) return null;
 
   return (
-    <div className="bg-surface-raised border border-surface-border rounded-xl p-4 space-y-3">
+    <div className="glass p-4 space-y-3">
       <h3 className="text-sm font-semibold flex items-center gap-2">
         <Lock className="w-4 h-4 text-warning" />
         Pro限定機能
@@ -20,11 +20,13 @@ export function LockPopup({ lockedFeatures }: LockPopupProps) {
         {lockedFeatures.map((feature) => (
           <div
             key={feature.id}
-            className="flex items-start gap-3 p-3 rounded-lg bg-surface-overlay/50 border border-surface-border/50"
+            className="glass-sm flex items-start gap-3 p-3"
           >
             <Lock className="w-4 h-4 text-text-muted mt-0.5 shrink-0" />
             <div>
-              <p className="text-sm font-medium text-text-primary">{feature.name}</p>
+              <p className="text-sm font-medium text-text-primary">
+                {feature.name}
+              </p>
               <p className="text-xs text-text-muted">{feature.description}</p>
             </div>
           </div>
@@ -32,7 +34,7 @@ export function LockPopup({ lockedFeatures }: LockPopupProps) {
       </div>
       <a
         href="/pricing"
-        className="block text-center text-sm px-4 py-2 rounded-lg bg-accent/10 text-accent border border-accent/20 hover:bg-accent/20 transition cursor-pointer"
+        className="btn-primary block text-center text-sm px-4 py-2 rounded-lg cursor-pointer"
       >
         Proプランで全機能を解放
       </a>
