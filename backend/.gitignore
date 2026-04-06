@@ -1,0 +1,27 @@
+# EveryDB2 SQLite (large, user-specific)
+data/jravan.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Environment
+.env
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Trained models (regenerable)
+trained_models/*.pkl
+trained_models/*.json
+
+# Keep cache CSV for deployment
+!data/feature_table_cache.csv

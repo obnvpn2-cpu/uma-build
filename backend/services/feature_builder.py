@@ -30,9 +30,10 @@ COLUMN_CANDIDATES: Dict[str, List[str]] = {
     "race_date": ["RaceDate", "RACE_DATE", "racedate", "race_date", "Year"],
     "place": ["Place", "PLACE", "place", "JyoCD", "Jyo"],
     "distance": ["Distance", "DISTANCE", "distance", "Kyori"],
-    "track_type": ["TrackType", "TRACK_TYPE", "tracktype", "track_type", "TrackCD", "SibaBaba"],
+    "track_type": ["TrackType", "TRACK_TYPE", "tracktype", "track_type",
+                   "TrackCD", "SibaBabaCD", "SibaBaba"],
     "track_condition": ["TrackCondition", "TRACK_CONDITION", "trackcondition",
-                        "track_condition", "BabaCD", "BabaSt"],
+                        "track_condition", "BabaCD", "BabaSt", "DirtBabaCD"],
     "grade": ["Grade", "GRADE", "grade", "GradeCD", "JyuryoCD"],
     "race_class": ["RaceClass", "RACE_CLASS", "raceclass", "race_class", "ClassCD"],
     "field_size": ["FieldSize", "FIELD_SIZE", "fieldsize", "field_size", "TorokuTosu", "SyussoTosu"],
@@ -40,7 +41,7 @@ COLUMN_CANDIDATES: Dict[str, List[str]] = {
     "horse_key": ["HorseKey", "HORSE_KEY", "horsekey", "horse_key", "KettoNum", "UmaKey"],
     "finish_order": ["FinishOrder", "FINISH_ORDER", "finishorder", "finish_order",
                      "KakuteiJyuni", "ChakuJyuni", "Tyaku"],
-    "time": ["Time", "TIME", "time", "HaronTimeL3", "RaceTime"],
+    "time": ["Time", "TIME", "time", "RaceTime"],
     "last3f": ["Last3F", "LAST3F", "last3f", "HaronTimeL3", "L3F", "AgariSanten"],
     "passing_order": ["PassingOrder", "PASSING_ORDER", "passingorder", "passing_order",
                       "Corner1", "CornerJyuni"],
@@ -49,9 +50,9 @@ COLUMN_CANDIDATES: Dict[str, List[str]] = {
     "win_odds": ["WinOdds", "WIN_ODDS", "winodds", "win_odds", "Odds", "TansyoOdds"],
     "popularity": ["Popularity", "POPULARITY", "popularity", "Ninki", "NinkiJyuni"],
     "body_weight": ["BodyWeight", "BODY_WEIGHT", "bodyweight", "body_weight",
-                    "Bataiju", "ZogenFugo"],
+                    "BaTaijyu", "Bataiju", "ZogenFugo"],
     "body_weight_diff": ["BodyWeightDiff", "BODY_WEIGHT_DIFF", "bodyweightdiff",
-                         "body_weight_diff", "BataijuZougen", "Zogen"],
+                         "body_weight_diff", "BaTaijyuZougen", "BataijuZougen", "Zogen"],
     "jockey_code": ["JockeyCode", "JOCKEY_CODE", "jockeycode", "jockey_code",
                     "KisyuCode", "Kisyu"],
     "trainer_code": ["TrainerCode", "TRAINER_CODE", "trainercode", "trainer_code",
@@ -64,6 +65,9 @@ COLUMN_CANDIDATES: Dict[str, List[str]] = {
                        "weight_carried", "Futan", "FutanJuryo"],
     "prize_money": ["PrizeMoney", "PRIZE_MONEY", "prizemoney", "prize_money",
                     "Honsyokin", "Syokin"],
+    # Pedigree columns (joined from N_UMA by postprocess script)
+    "sire_code": ["SireCode", "sire_code", "Ketto3InfoHansyokuNum1"],
+    "damsire_code": ["DamsireCode", "damsire_code", "Ketto3InfoHansyokuNum5"],
 }
 
 
