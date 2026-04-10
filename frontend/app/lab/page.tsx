@@ -14,7 +14,7 @@ import { ConditionBreakdown } from "@/components/results/ConditionBreakdown";
 import { FeatureImportanceChart } from "@/components/results/FeatureImportanceChart";
 import { LockPopup } from "@/components/paywall/LockPopup";
 import { Toast } from "@/components/ui/Toast";
-import { SkeletonCard } from "@/components/ui/Skeleton";
+import { ColdStartLoader } from "@/components/ui/ColdStartLoader";
 import { useFeatureSelection } from "@/hooks/useFeatureSelection";
 import { useLearning } from "@/hooks/useLearning";
 import { useAttempts } from "@/hooks/useAttempts";
@@ -32,6 +32,7 @@ export default function LabPage() {
     categories,
     selectedIds,
     isLoading: featuresLoading,
+    error: featuresError,
     toggleFeature,
     toggleAll,
     resetDefaults,
@@ -95,10 +96,24 @@ export default function LabPage() {
             transition={{ duration: 0.2 }}
           >
             {featuresLoading ? (
-              <div className="grid gap-3 sm:grid-cols-2">
-                {Array.from({ length: 4 }, (_, i) => (
-                  <SkeletonCard key={i} />
-                ))}
+              <ColdStartLoader count={4} />
+            ) : featuresError ? (
+              <div className="glass-strong p-6 text-center space-y-4">
+                <div className="text-3xl">⚠️</div>
+                <h3 className="font-mincho text-lg font-bold">
+                  特徴量カタログを取得できませんでした
+                </h3>
+                <p className="text-sm text-text-secondary">
+                  {featuresError instanceof Error
+                    ? featuresError.message
+                    : "サーバーに接続できません。"}
+                </p>
+                <button
+                  onClick={() => window.location.reload()}
+                  className="btn-primary px-5 py-2 rounded-lg text-sm cursor-pointer"
+                >
+                  再読み込み
+                </button>
               </div>
             ) : (
               <>
