@@ -207,6 +207,8 @@ def quick_train(
         predictions_df["track_condition"] = val_df["track_condition"]
     if "distance" in val_df.columns:
         predictions_df["distance"] = val_df["distance"]
+    if "tansho_payout" in val_df.columns:
+        predictions_df["tansho_payout"] = val_df["tansho_payout"]
     predictions_df["pred_prob"] = val_preds
     predictions_df["actual_win"] = y_val.values
 

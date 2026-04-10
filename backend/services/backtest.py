@@ -48,8 +48,11 @@ def _calc_roi(
     if total_bet == 0:
         return {"total_bet": 0, "total_return": 0, "roi": 0.0, "profit": 0}
 
-    # Win returns = odds * bet_amount for winning bets
-    if "win_odds" in picks.columns:
+    # Win returns: prefer actual payout data, then odds, then fallback
+    if "tansho_payout" in picks.columns and picks["tansho_payout"].notna().any():
+        wins = picks[(picks["actual_win"] == 1) & picks["tansho_payout"].notna()]
+        total_return = float(wins["tansho_payout"].sum()) * (bet_amount / 100)
+    elif "win_odds" in picks.columns:
         wins = picks[picks["actual_win"] == 1]
         total_return = float((wins["win_odds"] * bet_amount).sum())
     else:

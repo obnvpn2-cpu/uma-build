@@ -68,6 +68,22 @@ COLUMN_CANDIDATES: Dict[str, List[str]] = {
     # Pedigree columns (joined from N_UMA by postprocess script)
     "sire_code": ["SireCode", "sire_code", "Ketto3InfoHansyokuNum1"],
     "damsire_code": ["DamsireCode", "damsire_code", "Ketto3InfoHansyokuNum5"],
+    # Training features (pre-aggregated by postprocess script)
+    "train_days_since_last": ["train_days_since_last"],
+    "train_last_hanro_time": ["train_last_hanro_time"],
+    "train_last_hanro_finish": ["train_last_hanro_finish"],
+    "train_hanro_accel": ["train_hanro_accel"],
+    "train_best_hanro_time_30d": ["train_best_hanro_time_30d"],
+    "train_wood_avg_pace": ["train_wood_avg_pace"],
+    "train_total_count_30d": ["train_total_count_30d"],
+    "train_hanro_ratio": ["train_hanro_ratio"],
+    # Place odds (joined by postprocess script)
+    "fuku_odds_low": ["fuku_odds_low", "FukuOddsLow"],
+    "fuku_odds_high": ["fuku_odds_high", "FukuOddsHigh"],
+    "fuku_odds_range": ["fuku_odds_range"],
+    # Payout data (for backtest, not training features)
+    "tansho_payout": ["tansho_payout"],
+    "fukusho_payout": ["fukusho_payout"],
 }
 
 

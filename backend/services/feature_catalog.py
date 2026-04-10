@@ -1,6 +1,6 @@
 """Feature catalog for UmaBuild.
 
-Defines 8 categories of features that users can select via the UI.
+Defines 10 categories of features that users can select via the UI.
 Each feature maps to computed columns in the feature_table.
 """
 
@@ -157,7 +157,40 @@ FEATURE_CATALOG: List[Dict[str, Any]] = [
         ],
     },
     # -----------------------------------------------------------------------
-    # 8. 血統 (Pedigree)
+    # 8. 調教 (Training)
+    # -----------------------------------------------------------------------
+    {
+        "id": "training",
+        "name": "調教",
+        "description": "坂路・ウッドチップ調教の直近タイム・加速率・頻度",
+        "icon": "🏋️",
+        "features": [
+            {"id": "train_days_since_last", "label": "調教間隔", "description": "最終調教からレースまでの日数", "default_on": True},
+            {"id": "train_last_hanro_time", "label": "坂路タイム", "description": "直近の坂路4Fタイム", "default_on": False},
+            {"id": "train_last_hanro_finish", "label": "坂路ラスト1F", "description": "直近の坂路ラスト1Fタイム", "default_on": True},
+            {"id": "train_hanro_accel", "label": "坂路加速率", "description": "ラスト1F÷平均1F。1.0未満=終い加速", "default_on": True},
+            {"id": "train_best_hanro_time_30d", "label": "坂路30日ベスト", "description": "レース前30日間の坂路最速タイム", "default_on": False},
+            {"id": "train_wood_avg_pace", "label": "ウッド平均ペース", "description": "直近ウッドの1Fあたり平均ペース", "default_on": False},
+            {"id": "train_total_count_30d", "label": "調教30日回数", "description": "レース前30日間の調教合計回数", "default_on": True},
+            {"id": "train_hanro_ratio", "label": "坂路割合", "description": "坂路回数÷合計回数（調教スタイル）", "default_on": False},
+        ],
+    },
+    # -----------------------------------------------------------------------
+    # 9. 複勝オッズ (Place Odds)
+    # -----------------------------------------------------------------------
+    {
+        "id": "place_odds",
+        "name": "複勝オッズ",
+        "description": "複勝オッズの上下限・レンジ（バックテスト専用）",
+        "icon": "📈",
+        "features": [
+            {"id": "fuku_odds_low", "label": "複勝オッズ下限", "description": "複勝オッズの下限値", "default_on": False},
+            {"id": "fuku_odds_high", "label": "複勝オッズ上限", "description": "複勝オッズの上限値", "default_on": False},
+            {"id": "fuku_odds_range", "label": "複勝オッズ幅", "description": "3着以内の不確実性指標（上限-下限）", "default_on": False},
+        ],
+    },
+    # -----------------------------------------------------------------------
+    # 10. 血統 (Pedigree)
     # -----------------------------------------------------------------------
     {
         "id": "pedigree",
@@ -256,6 +289,19 @@ _FEATURE_ID_TO_COLUMNS: Dict[str, List[str]] = {
     "trainer_course_win_rate": ["trainer_course_win_rate"],
     "trainer_horse_combo_n": ["trainer_horse_combo_n"],
     "trainer_horse_combo_win_rate": ["trainer_horse_combo_win_rate"],
+    # Training
+    "train_days_since_last": ["train_days_since_last"],
+    "train_last_hanro_time": ["train_last_hanro_time"],
+    "train_last_hanro_finish": ["train_last_hanro_finish"],
+    "train_hanro_accel": ["train_hanro_accel"],
+    "train_best_hanro_time_30d": ["train_best_hanro_time_30d"],
+    "train_wood_avg_pace": ["train_wood_avg_pace"],
+    "train_total_count_30d": ["train_total_count_30d"],
+    "train_hanro_ratio": ["train_hanro_ratio"],
+    # Place odds
+    "fuku_odds_low": ["fuku_odds_low"],
+    "fuku_odds_high": ["fuku_odds_high"],
+    "fuku_odds_range": ["fuku_odds_range"],
     # Pedigree
     "sire_group": ["sire_group"],
     "damsire_group": ["damsire_group"],
