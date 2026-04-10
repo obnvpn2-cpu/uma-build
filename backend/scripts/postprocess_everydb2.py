@@ -317,7 +317,19 @@ def step5_training_aggregate(conn: sqlite3.Connection) -> None:
     for c in new_cols:
         uma[c] = np.nan
 
-    # Process horse-by-horse using merge_asof for efficiency
+    # Pre-group training data by KettoNum for O(1) lookup (critical for perf)
+    hanro_groups = {}
+    if hanro_df is not None:
+        logger.info("  Pre-grouping N_HANRO by KettoNum...")
+        for ketto, grp in hanro_df.groupby("KettoNum"):
+            hanro_groups[ketto] = grp
+
+    wood_groups = {}
+    if wood_df is not None:
+        logger.info("  Pre-grouping N_WOOD_CHIP by KettoNum...")
+        for ketto, grp in wood_df.groupby("KettoNum"):
+            wood_groups[ketto] = grp
+
     horse_groups = uma.groupby("KettoNum")
     total = len(horse_groups)
     log_interval = max(1, total // 20)
@@ -329,19 +341,9 @@ def step5_training_aggregate(conn: sqlite3.Connection) -> None:
         race_dates_list = group["RaceDate"].values
         row_indices = group.index.values
 
-        # Get hanro records for this horse
-        h_records = None
-        if hanro_df is not None:
-            h_records = hanro_df[hanro_df["KettoNum"] == ketto].copy()
-            if len(h_records) == 0:
-                h_records = None
-
-        # Get wood records for this horse
-        w_records = None
-        if wood_df is not None:
-            w_records = wood_df[wood_df["KettoNum"] == ketto].copy()
-            if len(w_records) == 0:
-                w_records = None
+        # O(1) lookup from pre-grouped dicts
+        h_records = hanro_groups.get(ketto)
+        w_records = wood_groups.get(ketto)
 
         if h_records is None and w_records is None:
             continue
@@ -415,16 +417,17 @@ def step5_training_aggregate(conn: sqlite3.Connection) -> None:
         if not _column_exists(cursor, "N_UMA_RACE", col_name):
             cursor.execute(f"ALTER TABLE [N_UMA_RACE] ADD COLUMN [{col_name}] REAL")
 
-    # Batch update using rowid
+    # Batch update using rowid (convert numpy types to Python native for SQLite)
     for col_name in new_cols:
         valid = uma[uma[col_name].notna()][["rowid", col_name]]
         if len(valid) == 0:
             continue
+        params = [(float(v), int(r)) for v, r in zip(valid[col_name].values, valid["rowid"].values)]
         cursor.executemany(
             f"UPDATE [N_UMA_RACE] SET [{col_name}] = ? WHERE rowid = ?",
-            list(zip(valid[col_name].values, valid["rowid"].values)),
+            params,
         )
-        logger.info("  %s: updated %d rows", col_name, len(valid))
+        logger.info("  %s: updated %d rows (rowcount=%d)", col_name, len(valid), cursor.rowcount)
 
     filled = cursor.execute(
         "SELECT COUNT(*) FROM N_UMA_RACE WHERE train_last_hanro_finish IS NOT NULL"
@@ -457,30 +460,32 @@ def step6_join_payout(conn: sqlite3.Connection) -> None:
     cursor.execute("PRAGMA table_info([N_HARAI])")
     harai_cols = {row[1] for row in cursor.fetchall()}
 
-    # Tansho: TansyoKumi1-3 / TansyoPay1-3
+    # Tansho: PayTansyoUmaban1-3 / PayTansyoPay1-3 (handles dead heats)
     tansho_pairs = []
     for i in range(1, 4):
-        kumi = f"TansyoKumi{i}"
-        pay = f"TansyoPay{i}"
-        if kumi in harai_cols and pay in harai_cols:
-            tansho_pairs.append((kumi, pay))
+        uma_col = f"PayTansyoUmaban{i}"
+        pay_col = f"PayTansyoPay{i}"
+        if uma_col in harai_cols and pay_col in harai_cols:
+            tansho_pairs.append((uma_col, pay_col))
 
-    # Fukusho: FukusyoKumi1-3 / FukusyoPay1-3
+    # Fukusho: PayFukusyoUmaban1-5 / PayFukusyoPay1-5
     fukusho_pairs = []
-    for i in range(1, 4):
-        kumi = f"FukusyoKumi{i}"
-        pay = f"FukusyoPay{i}"
-        if kumi in harai_cols and pay in harai_cols:
-            fukusho_pairs.append((kumi, pay))
+    for i in range(1, 6):
+        uma_col = f"PayFukusyoUmaban{i}"
+        pay_col = f"PayFukusyoPay{i}"
+        if uma_col in harai_cols and pay_col in harai_cols:
+            fukusho_pairs.append((uma_col, pay_col))
 
     if not tansho_pairs and not fukusho_pairs:
         logger.warning("No payout columns found in N_HARAI. Available: %s", sorted(harai_cols))
         return
 
+    logger.info("  Tansho pairs: %d, Fukusho pairs: %d", len(tansho_pairs), len(fukusho_pairs))
+
     # Load harai data
     select_cols = ["RaceKey"]
-    for kumi, pay in tansho_pairs + fukusho_pairs:
-        select_cols.extend([kumi, pay])
+    for u, p in tansho_pairs + fukusho_pairs:
+        select_cols.extend([u, p])
     harai = pd.read_sql(
         f"SELECT {', '.join(select_cols)} FROM N_HARAI WHERE RaceKey IS NOT NULL",
         conn,
@@ -491,28 +496,44 @@ def step6_join_payout(conn: sqlite3.Connection) -> None:
         "SELECT rowid, RaceKey, Umaban FROM N_UMA_RACE WHERE RaceKey IS NOT NULL AND Umaban IS NOT NULL",
         conn,
     )
-    uma["Umaban"] = uma["Umaban"].astype(str).str.strip()
+    uma["Umaban"] = uma["Umaban"].astype(str).str.strip().str.zfill(2)
 
     # Build payout lookup: {(RaceKey, Umaban_str) -> payout}
     tansho_map = {}
     fukusho_map = {}
 
+    def _normalize_umaban(val) -> str:
+        if val is None:
+            return ""
+        s = str(val).strip()
+        if not s:
+            return ""
+        # Zero-pad to 2 digits
+        try:
+            return f"{int(s):02d}"
+        except (ValueError, TypeError):
+            return s
+
     for _, row in harai.iterrows():
         rk = row["RaceKey"]
-        for kumi, pay in tansho_pairs:
-            kumi_val = str(row.get(kumi, "")).strip()
-            pay_val = row.get(pay)
-            if kumi_val and kumi_val != "" and kumi_val != "0" and pd.notna(pay_val):
+        for u_col, p_col in tansho_pairs:
+            uma_val = _normalize_umaban(row.get(u_col))
+            pay_val = row.get(p_col)
+            if uma_val and uma_val != "00" and pd.notna(pay_val):
                 try:
-                    tansho_map[(rk, kumi_val)] = int(pay_val)
+                    p = int(pay_val)
+                    if p > 0:
+                        tansho_map[(rk, uma_val)] = p
                 except (ValueError, TypeError):
                     pass
-        for kumi, pay in fukusho_pairs:
-            kumi_val = str(row.get(kumi, "")).strip()
-            pay_val = row.get(pay)
-            if kumi_val and kumi_val != "" and kumi_val != "0" and pd.notna(pay_val):
+        for u_col, p_col in fukusho_pairs:
+            uma_val = _normalize_umaban(row.get(u_col))
+            pay_val = row.get(p_col)
+            if uma_val and uma_val != "00" and pd.notna(pay_val):
                 try:
-                    fukusho_map[(rk, kumi_val)] = int(pay_val)
+                    p = int(pay_val)
+                    if p > 0:
+                        fukusho_map[(rk, uma_val)] = p
                 except (ValueError, TypeError):
                     pass
 
@@ -534,11 +555,12 @@ def step6_join_payout(conn: sqlite3.Connection) -> None:
         valid = uma[uma[col_name].notna()][["rowid", col_name]]
         if len(valid) == 0:
             continue
+        params = [(int(v), int(r)) for v, r in zip(valid[col_name].values, valid["rowid"].values)]
         cursor.executemany(
             f"UPDATE [N_UMA_RACE] SET [{col_name}] = ? WHERE rowid = ?",
-            list(zip(valid[col_name].astype(int).values, valid["rowid"].values)),
+            params,
         )
-        logger.info("  %s: updated %d rows", col_name, len(valid))
+        logger.info("  %s: updated %d rows (rowcount=%d)", col_name, len(valid), cursor.rowcount)
 
 
 def step7_join_place_odds(conn: sqlite3.Connection) -> None:
@@ -633,11 +655,12 @@ def step7_join_place_odds(conn: sqlite3.Connection) -> None:
         valid = merged[merged[col_name].notna()][["rowid", col_name]]
         if len(valid) == 0:
             continue
+        params = [(float(v), int(r)) for v, r in zip(valid[col_name].values, valid["rowid"].values)]
         cursor.executemany(
             f"UPDATE [N_UMA_RACE] SET [{col_name}] = ? WHERE rowid = ?",
-            list(zip(valid[col_name].values, valid["rowid"].values)),
+            params,
         )
-        logger.info("  %s: updated %d rows", col_name, len(valid))
+        logger.info("  %s: updated %d rows (rowcount=%d)", col_name, len(valid), cursor.rowcount)
 
 
 def step8_build_cache(db_path: str) -> None:
