@@ -5,15 +5,15 @@ export const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:800
 /** Default fetch timeout. Covers Render Free cold starts (up to ~60s). */
 const DEFAULT_TIMEOUT_MS = 90_000;
 
-async function fetchAPI<T>(
-  path: string,
+async function fetchWithTimeout<T>(
+  url: string,
   options?: RequestInit,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(`${API_BASE}${path}`, {
+    const res = await fetch(url, {
       headers: { "Content-Type": "application/json" },
       signal: controller.signal,
       ...options,
@@ -43,12 +43,39 @@ async function fetchAPI<T>(
   }
 }
 
+async function fetchAPI<T>(
+  path: string,
+  options?: RequestInit,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+): Promise<T> {
+  return fetchWithTimeout<T>(`${API_BASE}${path}`, options, timeoutMs);
+}
+
+/**
+ * 同一オリジンの Next.js ルートハンドラ経由で fetch する。
+ * Edge Cache 化した `/api/features` 系を叩くために使う。
+ * ブラウザ実行時は相対パス、SSR時は API_BASE を経由せず同一オリジンに解決させる。
+ */
+async function fetchRelative<T>(
+  path: string,
+  options?: RequestInit,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+): Promise<T> {
+  const url =
+    typeof window !== "undefined"
+      ? `${window.location.origin}${path}`
+      : path;
+  return fetchWithTimeout<T>(url, options, timeoutMs);
+}
+
 export async function fetchFeatures(): Promise<FeatureCategory[]> {
-  return fetchAPI<FeatureCategory[]>("/api/features");
+  // Next.js Edge ルート経由 → Vercel Edge Cache から即応答
+  return fetchRelative<FeatureCategory[]>("/api/features");
 }
 
 export async function fetchDefaults(): Promise<{ default_features: string[]; count: number }> {
-  return fetchAPI("/api/features/defaults");
+  // Next.js Edge ルート経由 → Vercel Edge Cache から即応答
+  return fetchRelative("/api/features/defaults");
 }
 
 export async function postLearn(request: LearnRequest): Promise<{ job_id: string; status: string }> {
