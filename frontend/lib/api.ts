@@ -91,14 +91,14 @@ export async function pollJobStatus(jobId: string): Promise<JobStatusResponse> {
   );
 }
 
-export async function fetchLimits(sessionId: string, isPro: boolean): Promise<LimitsResponse> {
+export async function fetchLimits(sessionId: string): Promise<LimitsResponse> {
   return fetchAPI<LimitsResponse>(
-    `/api/learn/limits?session_id=${encodeURIComponent(sessionId)}&is_pro=${isPro}`
+    `/api/learn/limits?session_id=${encodeURIComponent(sessionId)}`
   );
 }
 
-export async function fetchResults(modelId: string, isPro: boolean): Promise<LearnResponse> {
+export async function fetchResults(modelId: string): Promise<LearnResponse> {
   return fetchAPI<LearnResponse>(
-    `/api/results/${encodeURIComponent(modelId)}?is_pro=${isPro}`
+    `/api/results/${encodeURIComponent(modelId)}`
   );
 }

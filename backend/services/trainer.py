@@ -4,13 +4,13 @@ Coordinates the full training pipeline from feature selection through
 backtest and paywall masking.
 """
 
+import json
 import logging
 import os
-import json
 import time
 from typing import Any, Dict, List, Optional
 
-from ml.quick_train import quick_train, DEFAULT_DB_PATH
+from ml.quick_train import DEFAULT_DB_PATH, quick_train
 from services.backtest import run_backtest
 from services.paywall import mask_results
 
@@ -70,33 +70,30 @@ def get_cached_results(model_id: str) -> Optional[Dict[str, Any]]:
 
 def run_training(
     selected_feature_ids: List[str],
-    is_pro: bool = False,
     db_path: str = DEFAULT_DB_PATH,
 ) -> Dict[str, Any]:
     """Orchestrate the full training pipeline.
 
     Steps:
-    1. Determine data range (2yr free / 5yr pro)
-    2. Run quick_train with selected features
-    3. Run backtest on validation predictions
-    4. Apply paywall masking
-    5. Cache and return results
+    1. Run quick_train with selected features (always 2yr Free data)
+    2. Run backtest on validation predictions
+    3. Apply paywall masking (always Free until auth)
+    4. Cache and return results
 
     Args:
         selected_feature_ids: Feature IDs selected by the user.
-        is_pro: Whether the user is a pro subscriber.
         db_path: Path to the JRA-VAN database.
 
     Returns:
-        Dict with training results (masked for free users).
+        Dict with training results (masked as Free).
     """
     start_time = time.time()
 
-    # 1. Determine data range
-    data_years = 5 if is_pro else 2
+    # Always 2yr data until auth is implemented
+    data_years = 2
     logger.info(
-        "Starting training: %d features, %d years, is_pro=%s",
-        len(selected_feature_ids), data_years, is_pro,
+        "Starting training: %d features, %d years (always Free until auth)",
+        len(selected_feature_ids), data_years,
     )
 
     # 2. Run quick training
@@ -153,8 +150,8 @@ def run_training(
     # Cache full results (before masking)
     _cache_results(model_id, full_results)
 
-    # 4. Apply paywall masking
-    masked_results = mask_results(full_results, is_pro=is_pro)
+    # Apply paywall masking (always Free until auth)
+    masked_results = mask_results(full_results, is_pro=False)
 
     logger.info(
         "Training pipeline complete: model_id=%s, elapsed=%.1fs, roi=%.2f%%",

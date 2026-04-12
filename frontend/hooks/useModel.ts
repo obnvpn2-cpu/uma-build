@@ -10,13 +10,13 @@ export function useModel() {
   const [results, setResults] = useState<LearnResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  const loadLastModel = useCallback(async (isPro: boolean = false) => {
+  const loadLastModel = useCallback(async () => {
     const id = getLastModelId();
     if (!id) return;
 
     setIsLoading(true);
     try {
-      const data = await fetchResults(id, isPro);
+      const data = await fetchResults(id);
       setModelId(id);
       setResults(data);
     } catch {

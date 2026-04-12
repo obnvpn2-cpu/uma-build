@@ -1,119 +1,13 @@
 """Paywall masking service for UmaBuild.
 
-For free-tier users, masks detailed results with randomized dummy values.
-Pro users see everything.
+For free-tier users, masks detailed results with null values.
+Pro users see everything (determined server-side only).
 """
 
 import logging
-import random
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
-
-
-def _generate_dummy_condition_breakdown(n_items: int = 6) -> List[Dict[str, Any]]:
-    """Generate randomized dummy condition breakdown data."""
-    surfaces = ["芝", "ダート"]
-    conditions = ["良", "稍重", "重", "不良"]
-
-    items = []
-    for surface in surfaces:
-        for condition in conditions:
-            items.append({
-                "surface": surface,
-                "track_condition": condition,
-                "n_bets": random.randint(10, 200),
-                "n_hits": random.randint(1, 30),
-                "hit_rate": round(random.uniform(5, 30), 1),
-                "roi": None,  # Masked
-                "profit": None,  # Masked
-                "is_blurred": True,
-            })
-            if len(items) >= n_items:
-                break
-        if len(items) >= n_items:
-            break
-
-    return items
-
-
-def _generate_dummy_yearly_breakdown(n_years: int = 2) -> List[Dict[str, Any]]:
-    """Generate randomized dummy yearly breakdown data."""
-    current_year = 2024
-    items = []
-    for i in range(n_years):
-        items.append({
-            "year": current_year - i,
-            "n_bets": random.randint(50, 300),
-            "n_hits": random.randint(5, 50),
-            "hit_rate": round(random.uniform(5, 25), 1),
-            "roi": None,  # Masked
-            "profit": None,  # Masked
-            "is_blurred": True,
-        })
-    return items
-
-
-def _generate_dummy_distance_breakdown(n_items: int = 5) -> List[Dict[str, Any]]:
-    """Generate randomized dummy distance breakdown data."""
-    categories = [
-        "短距離(~1200m)", "マイル(~1600m)", "中距離(~2000m)",
-        "中長距離(~2400m)", "長距離(2500m~)",
-    ]
-    items = []
-    for cat in categories[:n_items]:
-        items.append({
-            "distance_category": cat,
-            "n_bets": random.randint(10, 150),
-            "n_hits": random.randint(1, 25),
-            "hit_rate": round(random.uniform(5, 25), 1),
-            "roi": None,  # Masked
-            "profit": None,  # Masked
-            "is_blurred": True,
-        })
-    return items
-
-
-def _generate_dummy_calibration(n_bins: int = 10) -> List[Dict[str, Any]]:
-    """Generate randomized dummy calibration data."""
-    items = []
-    for i in range(n_bins):
-        predicted = round(0.05 + i * 0.1, 2)
-        items.append({
-            "bin": f"({predicted - 0.05:.2f}, {predicted + 0.05:.2f}]",
-            "predicted_avg": predicted,
-            "actual_avg": None,  # Masked
-            "count": random.randint(20, 200),
-            "is_blurred": True,
-        })
-    return items
-
-
-def _generate_dummy_feature_importance(
-    feature_names: Optional[List[str]] = None,
-    n_features: int = 10,
-) -> List[Dict[str, Any]]:
-    """Generate randomized dummy feature importance data."""
-    if feature_names is None:
-        feature_names = [
-            "distance", "horse_win_rate", "jockey_win_rate",
-            "horse_avg_finish", "body_weight", "horse_recent3_avg",
-            "weight_carried", "horse_in3_rate", "field_size", "waku",
-        ]
-
-    items = []
-    total = 100.0
-    for i, name in enumerate(feature_names[:n_features]):
-        importance = round(random.uniform(2, total / max(1, n_features - i)), 1)
-        items.append({
-            "feature": name,
-            "importance": None,  # Masked
-            "rank": i + 1,
-            "is_blurred": True,
-        })
-        total -= importance
-
-    return items
 
 
 def mask_results(results: Dict[str, Any], is_pro: bool = False) -> Dict[str, Any]:
@@ -121,11 +15,11 @@ def mask_results(results: Dict[str, Any], is_pro: bool = False) -> Dict[str, Any
 
     For free users:
     - summary: Partially visible (roi visible, hit_rate visible, reliability visible)
-    - condition_breakdown: Replaced with dummy values, ROI masked
-    - yearly_breakdown: Replaced with dummy values, ROI masked
-    - distance_breakdown: Replaced with dummy values, ROI masked
-    - calibration: Replaced with dummy values
-    - feature_importance: Replaced with dummy values
+    - condition_breakdown: null (locked)
+    - yearly_breakdown: null (locked)
+    - distance_breakdown: null (locked)
+    - calibration: null (locked)
+    - feature_importance: null (locked)
     - future_prediction: Locked (unavailable)
     - overfitting_detection: Locked (unavailable)
 
@@ -134,7 +28,7 @@ def mask_results(results: Dict[str, Any], is_pro: bool = False) -> Dict[str, Any
 
     Args:
         results: Full training results dict.
-        is_pro: Whether the user is a pro subscriber.
+        is_pro: Whether the user is a pro subscriber (server-determined).
 
     Returns:
         Masked results dict.
@@ -166,25 +60,20 @@ def mask_results(results: Dict[str, Any], is_pro: bool = False) -> Dict[str, Any
         "is_blurred": False,
     }
 
-    # Feature importance: mask with dummy
-    feature_names = None
-    meta = results.get("meta", {})
-    if meta and "feature_names" in meta:
-        feature_names = meta["feature_names"]
-    dummy_fi = _generate_dummy_feature_importance(feature_names)
-
     # Determine data_years from meta
+    meta = results.get("meta", {})
     data_years = meta.get("data_years", 2) if meta else 2
 
     masked = {
         "model_id": results.get("model_id"),
         "is_pro": False,
         "summary": masked_summary,
-        "feature_importance": dummy_fi,
-        "condition_breakdown": _generate_dummy_condition_breakdown(),
-        "yearly_breakdown": _generate_dummy_yearly_breakdown(n_years=data_years),
-        "distance_breakdown": _generate_dummy_distance_breakdown(),
-        "calibration": _generate_dummy_calibration(),
+        # Return null for all breakdown fields — frontend shows lock UI
+        "feature_importance": None,
+        "condition_breakdown": None,
+        "yearly_breakdown": None,
+        "distance_breakdown": None,
+        "calibration": None,
         "meta": {
             "n_features": meta.get("n_features"),
             "data_years": data_years,

@@ -25,7 +25,6 @@ router = APIRouter(tags=["learn"])
 # In production this would use Redis + proper auth
 _daily_attempts: Dict[str, int] = {}
 MAX_FREE_DAILY_ATTEMPTS = 5
-MAX_PRO_DAILY_ATTEMPTS = 50
 
 # In-memory job store with size limit to prevent memory leaks
 _MAX_JOBS = 50
@@ -48,10 +47,6 @@ class LearnRequest(BaseModel):
         ...,
         min_length=1,
         description="List of feature IDs to use for training",
-    )
-    is_pro: bool = Field(
-        default=False,
-        description="Whether the user is a pro subscriber",
     )
     session_id: Optional[str] = Field(
         default=None,
@@ -82,10 +77,12 @@ def learn(request: LearnRequest) -> Dict[str, Any]:
 
     Returns immediately with a job_id (HTTP 202).
     Clients poll GET /api/learn/status/{job_id} for results.
+
+    Note: is_pro is always False until server-side auth is implemented.
     """
     logger.info(
-        "POST /api/learn: %d features, is_pro=%s",
-        len(request.selected_features), request.is_pro,
+        "POST /api/learn: %d features (always Free until auth)",
+        len(request.selected_features),
     )
 
     # 1. Validate selected features
@@ -107,16 +104,15 @@ def learn(request: LearnRequest) -> Dict[str, Any]:
             detail="少なくとも2つの特徴量を選択してください。",
         )
 
-    # 2. Check daily attempt limit
+    # 2. Check daily attempt limit (always Free until auth)
     session_id = request.session_id or "anonymous"
     current_attempts = _daily_attempts.get(session_id, 0)
-    max_attempts = MAX_PRO_DAILY_ATTEMPTS if request.is_pro else MAX_FREE_DAILY_ATTEMPTS
 
-    if current_attempts >= max_attempts:
+    if current_attempts >= MAX_FREE_DAILY_ATTEMPTS:
         raise HTTPException(
             status_code=429,
-            detail=f"本日の学習回数の上限（{max_attempts}回）に達しました。"
-            + ("" if request.is_pro else " Proプランにアップグレードすると上限が緩和されます。"),
+            detail=f"本日の学習回数の上限（{MAX_FREE_DAILY_ATTEMPTS}回）に達しました。"
+            " Proプランにアップグレードすると上限が緩和されます。",
         )
 
     # Increment attempt counter
@@ -128,7 +124,7 @@ def learn(request: LearnRequest) -> Dict[str, Any]:
 
     thread = threading.Thread(
         target=_run_job,
-        args=(job_id, valid_features, request.is_pro),
+        args=(job_id, valid_features),
         daemon=True,
     )
     thread.start()
@@ -136,10 +132,10 @@ def learn(request: LearnRequest) -> Dict[str, Any]:
     return {"job_id": job_id, "status": "training"}
 
 
-def _run_job(job_id: str, features: list, is_pro: bool) -> None:
+def _run_job(job_id: str, features: list) -> None:
     """Execute training in a background thread and update job status."""
     try:
-        results = run_training(selected_feature_ids=features, is_pro=is_pro)
+        results = run_training(selected_feature_ids=features)
         if results.get("error"):
             _store_job(job_id, {"status": "failed", "result": None, "error": results["error"]})
         else:
@@ -160,22 +156,22 @@ def job_status(job_id: str) -> Dict[str, Any]:
 
 
 @router.get("/learn/limits")
-def get_limits(session_id: str = "anonymous", is_pro: bool = False) -> Dict[str, Any]:
+def get_limits(session_id: str = "anonymous") -> Dict[str, Any]:
     """Get the current daily attempt limits and usage.
+
+    Note: Always returns Free limits until server-side auth is implemented.
 
     Args:
         session_id: Session identifier.
-        is_pro: Whether the user is a pro subscriber.
 
     Returns:
         Dict with max_attempts, used_attempts, remaining_attempts.
     """
-    max_attempts = MAX_PRO_DAILY_ATTEMPTS if is_pro else MAX_FREE_DAILY_ATTEMPTS
     used = _daily_attempts.get(session_id, 0)
 
     return {
-        "max_attempts": max_attempts,
+        "max_attempts": MAX_FREE_DAILY_ATTEMPTS,
         "used_attempts": used,
-        "remaining_attempts": max(0, max_attempts - used),
-        "is_pro": is_pro,
+        "remaining_attempts": max(0, MAX_FREE_DAILY_ATTEMPTS - used),
+        "is_pro": False,
     }

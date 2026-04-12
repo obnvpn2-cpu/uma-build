@@ -17,7 +17,6 @@ export interface FeatureCategory {
 // API request/response
 export interface LearnRequest {
   selected_features: string[];
-  is_pro: boolean;
   session_id?: string;
 }
 

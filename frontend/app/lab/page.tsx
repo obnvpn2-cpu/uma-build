@@ -13,6 +13,8 @@ import { YearlyROIChart } from "@/components/results/YearlyROIChart";
 import { ConditionBreakdown } from "@/components/results/ConditionBreakdown";
 import { FeatureImportanceChart } from "@/components/results/FeatureImportanceChart";
 import { LockPopup } from "@/components/paywall/LockPopup";
+import { ProLockSection } from "@/components/paywall/ProLockSection";
+import { DemoNoticeBanner } from "@/components/ui/DemoNoticeBanner";
 import { Toast } from "@/components/ui/Toast";
 import { ColdStartLoader } from "@/components/ui/ColdStartLoader";
 import { useFeatureSelection } from "@/hooks/useFeatureSelection";
@@ -26,7 +28,7 @@ export default function LabPage() {
     type: "success" | "error" | "info";
   } | null>(null);
 
-  const isPro = false; // MVP: always free
+  const isPro = false; // Always free until auth (Phase 2)
 
   const {
     categories,
@@ -51,12 +53,12 @@ export default function LabPage() {
       return;
     }
 
-    const result = await startLearning(Array.from(selectedIds), isPro);
+    const result = await startLearning(Array.from(selectedIds));
     refresh();
     if (result.ok) {
       setStep(3);
     }
-  }, [selectedIds, remaining, startLearning, isPro, refresh]);
+  }, [selectedIds, remaining, startLearning, refresh]);
 
   const handleStepClick = useCallback(
     (newStep: Step) => {
@@ -66,8 +68,6 @@ export default function LabPage() {
     },
     [results]
   );
-
-  const isBlurred = !isPro;
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
@@ -179,15 +179,11 @@ export default function LabPage() {
                 </div>
                 <div>
                   <p className="text-text-muted text-xs">学習データ期間</p>
-                  <p className="font-mono text-text-primary text-lg">
-                    {isPro ? "5年分" : "2年分"}
-                  </p>
+                  <p className="font-mono text-text-primary text-lg">2年分</p>
                 </div>
                 <div>
                   <p className="text-text-muted text-xs">プラン</p>
-                  <p className="text-text-primary text-lg">
-                    {isPro ? "Pro" : "Free"}
-                  </p>
+                  <p className="text-text-primary text-lg">Free</p>
                 </div>
               </div>
               <button
@@ -268,101 +264,112 @@ export default function LabPage() {
             transition={{ duration: 0.2 }}
             className="space-y-4"
           >
+            {/* DEMO notice banner */}
+            <DemoNoticeBanner />
+
             {/* Summary */}
             {results.summary && <BacktestSummary summary={results.summary} />}
 
-            {/* Charts grid */}
+            {/* Charts grid — locked sections for Free users */}
             <div className="grid gap-4 sm:grid-cols-2">
-              {/* Yearly ROI */}
-              {results.yearly_breakdown && results.yearly_breakdown.length > 0 && (
+              {/* Yearly ROI: show if data exists, otherwise lock */}
+              {results.yearly_breakdown && results.yearly_breakdown.length > 0 ? (
                 <YearlyROIChart
                   data={results.yearly_breakdown}
-                  isBlurred={isBlurred}
+                  isBlurred={!isPro}
                 />
+              ) : (
+                <ProLockSection title="年別ROI推移" />
               )}
 
-              {/* Feature importance */}
+              {/* Feature importance: show if data exists, otherwise lock */}
               {results.feature_importance &&
-                results.feature_importance.length > 0 && (
-                  <FeatureImportanceChart
-                    data={results.feature_importance}
-                    isBlurred={isBlurred}
-                    categories={categories}
-                  />
-                )}
+              results.feature_importance.length > 0 ? (
+                <FeatureImportanceChart
+                  data={results.feature_importance}
+                  isBlurred={!isPro}
+                  categories={categories}
+                />
+              ) : (
+                <ProLockSection title="特徴量重要度 Top10" />
+              )}
             </div>
 
-            {/* Condition breakdown */}
+            {/* Condition breakdown: show if data exists, otherwise lock */}
             {results.condition_breakdown &&
-              results.condition_breakdown.length > 0 && (
-                <ConditionBreakdown
-                  data={results.condition_breakdown}
-                  isBlurred={isBlurred}
-                />
-              )}
+            results.condition_breakdown.length > 0 ? (
+              <ConditionBreakdown
+                data={results.condition_breakdown}
+                isBlurred={!isPro}
+              />
+            ) : (
+              <ProLockSection title="馬場条件別パフォーマンス" />
+            )}
 
-            {/* Distance breakdown (reuse ConditionBreakdown component) */}
+            {/* Distance breakdown: show if data exists, otherwise lock */}
             {results.distance_breakdown &&
-              results.distance_breakdown.length > 0 && (
-                <div className="glass p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-semibold">距離別パフォーマンス</h3>
-                    {isBlurred && (
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-accent/15 text-accent border border-accent/40">
-                        Pro で詳細表示
-                      </span>
-                    )}
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-white/10 text-text-muted text-xs">
-                          <th className="text-left py-2 pr-4">距離</th>
-                          <th className="text-right py-2 px-2">購入数</th>
-                          <th className="text-right py-2 px-2">的中率</th>
-                          <th className="text-right py-2 px-2">回収率</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {results.distance_breakdown.map((item, i) => (
-                          <tr key={i} className="border-b border-white/5">
-                            <td className="py-2 pr-4 text-text-primary">
-                              {item.distance_category}
-                            </td>
-                            <td className="text-right py-2 px-2 font-mono text-text-secondary">
-                              {item.n_bets}
-                            </td>
-                            <td
-                              className={`text-right py-2 px-2 font-mono ${
-                                item.is_blurred ? "blur-overlay" : "text-text-secondary"
-                              }`}
-                            >
-                              {item.hit_rate?.toFixed(1)}%
-                            </td>
-                            <td
-                              className={`text-right py-2 px-2 font-mono ${
-                                item.is_blurred ? "blur-overlay" : ""
-                              } ${
-                                !item.is_blurred && item.roi !== null
-                                  ? item.roi >= 100
-                                    ? "text-success"
-                                    : "text-danger"
-                                  : "text-text-muted"
-                              }`}
-                            >
-                              {item.is_blurred
-                                ? "---%"
-                                : item.roi !== null
-                                ? `${item.roi.toFixed(1)}%`
-                                : "---"}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+            results.distance_breakdown.length > 0 ? (
+              <div className="glass p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold">距離別パフォーマンス</h3>
+                  {!isPro && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-accent/15 text-accent border border-accent/40">
+                      Pro で詳細表示
+                    </span>
+                  )}
                 </div>
-              )}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-white/10 text-text-muted text-xs">
+                        <th className="text-left py-2 pr-4">距離</th>
+                        <th className="text-right py-2 px-2">購入数</th>
+                        <th className="text-right py-2 px-2">的中率</th>
+                        <th className="text-right py-2 px-2">回収率</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {results.distance_breakdown.map((item, i) => (
+                        <tr key={i} className="border-b border-white/5">
+                          <td className="py-2 pr-4 text-text-primary">
+                            {item.distance_category}
+                          </td>
+                          <td className="text-right py-2 px-2 font-mono text-text-secondary">
+                            {item.n_bets}
+                          </td>
+                          <td
+                            className={`text-right py-2 px-2 font-mono ${
+                              item.is_blurred ? "blur-overlay" : "text-text-secondary"
+                            }`}
+                          >
+                            {item.hit_rate?.toFixed(1)}%
+                          </td>
+                          <td
+                            className={`text-right py-2 px-2 font-mono ${
+                              item.is_blurred ? "blur-overlay" : ""
+                            } ${
+                              !item.is_blurred && item.roi !== null
+                                ? item.roi >= 100
+                                  ? "text-success"
+                                  : "text-danger"
+                                : "text-text-muted"
+                            }`}
+                          >
+                            {item.is_blurred
+                              ? "---%"
+                              : item.roi !== null
+                              ? `${item.roi.toFixed(1)}%`
+                              : "---"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : (
+              <ProLockSection title="距離別パフォーマンス" />
+            )}
 
             {/* Locked features */}
             {results.locked_features && results.locked_features.length > 0 && (

@@ -18,10 +18,7 @@ export function useLearning() {
   const [error, setError] = useState<string | null>(null);
 
   const startLearning = useCallback(
-    async (
-      selectedFeatures: string[],
-      isPro: boolean = false
-    ): Promise<StartLearningResult> => {
+    async (selectedFeatures: string[]): Promise<StartLearningResult> => {
       setIsLoading(true);
       setError(null);
       setResults(null);
@@ -30,7 +27,6 @@ export function useLearning() {
         const sessionId = getSessionId();
         const { job_id } = await postLearn({
           selected_features: selectedFeatures,
-          is_pro: isPro,
           session_id: sessionId,
         });
 

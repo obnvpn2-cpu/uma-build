@@ -749,21 +749,36 @@ def generate_demo_feature_table(n_races: int = 500, avg_field_size: int = 14) ->
         # Sort by ability (descending) to get finish order
         abilities.sort(key=lambda x: -x[3])
 
+        # Pre-race assignments: gate numbers are random, not correlated with outcome
+        gate_order = rng.permutation(field_size) + 1  # 1-indexed random gate assignment
+
+        # Market estimate: ability + very large noise (market is highly imperfect)
+        market_estimates = [(ability, idx) for idx, (h_idx, j_idx, t_idx, ability) in enumerate(abilities)]
+        noisy_market = [(est + rng.normal(0, 3.0), idx) for est, idx in market_estimates]
+        noisy_market.sort(key=lambda x: -x[0])
+        popularity_map = {}
+        for rank, (_, idx) in enumerate(noisy_market, 1):
+            popularity_map[idx] = rank
+
         for finish_pos, (h_idx, j_idx, t_idx, ability) in enumerate(abilities, 1):
-            waku = min(8, (finish_pos - 1) // 2 + 1)
-            umaban = finish_pos  # simplified
+            waku = min(8, (gate_order[finish_pos - 1] - 1) // 2 + 1)
+            umaban = int(gate_order[finish_pos - 1])
             sex_val = rng.choice([1, 2, 3], p=[0.55, 0.40, 0.05])
             age_val = rng.choice([2, 3, 4, 5, 6, 7], p=[0.10, 0.25, 0.25, 0.20, 0.12, 0.08])
             weight_carried = 55.0 + rng.normal(0, 2)
             body_weight = 460 + rng.normal(0, 30)
             weight_diff_val = rng.normal(0, 4)
-            last3f_time = 33.0 + rng.normal(0, 1.5) + finish_pos * 0.15
-            corner4_pos = max(1, min(field_size, int(finish_pos + rng.normal(0, 3))))
-            corner3_pos = max(1, min(field_size, int(corner4_pos + rng.normal(0, 2))))
+            # last3f: mostly noise, weak relationship with finish position
+            last3f_time = 33.0 + rng.normal(0, 2.0) + finish_pos * 0.03
+            # Corner positions: mostly random with slight trend
+            corner4_pos = max(1, min(field_size, int(rng.uniform(1, field_size + 1))))
+            corner3_pos = max(1, min(field_size, int(rng.uniform(1, field_size + 1))))
 
-            # Win odds (roughly inversely correlated with ability)
-            raw_odds = max(1.1, 10.0 - ability * 2.0 + rng.exponential(3))
-            popularity = finish_pos  # simplified, correlated with outcome
+            # Win odds: market-implied probability + heavy noise (not directly from ability)
+            market_pop = popularity_map[finish_pos - 1]
+            implied_prob = max(0.02, 1.0 / (market_pop + rng.exponential(2)))
+            raw_odds = max(1.1, (1.0 / implied_prob) * (0.8 + rng.uniform(0, 0.4)))
+            popularity = market_pop
 
             # Prize money (for winners more)
             if finish_pos == 1:
