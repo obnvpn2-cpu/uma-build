@@ -35,6 +35,8 @@ export function FAQAccordion() {
         <div key={i} className="glass overflow-hidden">
           <button
             onClick={() => setOpenIndex(openIndex === i ? null : i)}
+            aria-expanded={openIndex === i}
+            aria-controls={`faq-answer-${i}`}
             className="w-full flex items-center justify-between p-6 text-left"
           >
             <span className="font-medium text-text-primary pr-4">
@@ -47,8 +49,10 @@ export function FAQAccordion() {
             />
           </button>
           <div
+            id={`faq-answer-${i}`}
+            role="region"
             className={`overflow-hidden transition-all duration-200 ${
-              openIndex === i ? "max-h-40 opacity-100" : "max-h-0 opacity-0"
+              openIndex === i ? "max-h-60 opacity-100" : "max-h-0 opacity-0"
             }`}
           >
             <p className="px-6 pb-6 text-sm text-text-secondary leading-relaxed">

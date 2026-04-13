@@ -153,9 +153,10 @@ export default function LandingPage() {
                   (f) => (
                     <span
                       key={f}
-                      className="px-3 py-1 text-xs rounded-full bg-accent/20 text-accent border border-accent/30 font-medium"
+                      className="px-3 py-1 text-xs rounded-full bg-accent/20 text-accent border border-accent/30 font-medium inline-flex items-center gap-1"
                     >
-                      ✓ {f}
+                      <Check className="w-3 h-3" strokeWidth={2} />
+                      {f}
                     </span>
                   )
                 )}
@@ -268,7 +269,7 @@ export default function LandingPage() {
                 </p>
                 <div className="space-y-3">
                   {yearlyData.map(({ year, roi }) => (
-                    <div key={year} className="flex items-center gap-3">
+                    <div key={year} className="flex items-center gap-3" role="img" aria-label={`${year}年のROI: ${roi}%`}>
                       <span className="text-xs font-mono text-text-muted w-10">
                         {year}
                       </span>
@@ -293,7 +294,7 @@ export default function LandingPage() {
                 </p>
                 <div className="space-y-3">
                   {featureImportance.map(({ name, pct }) => (
-                    <div key={name} className="flex items-center gap-3">
+                    <div key={name} className="flex items-center gap-3" role="img" aria-label={`${name}: 重要度${pct}%`}>
                       <span className="text-xs text-text-secondary w-20 truncate">
                         {name}
                       </span>
@@ -329,16 +330,16 @@ export default function LandingPage() {
             <table className="w-full text-sm min-w-[480px]">
               <thead>
                 <tr className="bg-white/[0.04]">
-                  <th className="text-left py-4 px-5 text-text-muted font-normal" />
-                  <th className="py-4 px-5 text-center">
+                  <th scope="col" className="text-left py-4 px-5 text-text-muted font-normal" />
+                  <th scope="col" className="py-4 px-5 text-center">
                     <span className="text-accent font-bold font-mincho text-base">
                       UmaBuild
                     </span>
                   </th>
-                  <th className="py-4 px-5 text-center text-text-secondary font-normal">
+                  <th scope="col" className="py-4 px-5 text-center text-text-secondary font-normal">
                     予想サイト購入
                   </th>
-                  <th className="py-4 px-5 text-center text-text-secondary font-normal">
+                  <th scope="col" className="py-4 px-5 text-center text-text-secondary font-normal">
                     自力コーディング
                   </th>
                 </tr>
@@ -351,18 +352,18 @@ export default function LandingPage() {
                       idx % 2 === 1 ? "bg-white/[0.02]" : ""
                     }`}
                   >
-                    <td className="py-3.5 px-5 text-text-secondary font-medium">
+                    <th scope="row" className="py-3.5 px-5 text-left text-text-secondary font-medium">
                       {row.label}
-                    </td>
+                    </th>
                     {(
                       [row.uma, row.site, row.diy] as (string | boolean)[]
                     ).map((val, i) => (
                       <td key={i} className="py-3.5 px-5 text-center">
                         {typeof val === "boolean" ? (
                           val ? (
-                            <Check className="w-5 h-5 text-success mx-auto" strokeWidth={1.5} />
+                            <Check className="w-5 h-5 text-success mx-auto" strokeWidth={1.5} aria-label="対応" />
                           ) : (
-                            <X className="w-5 h-5 text-danger/70 mx-auto" strokeWidth={1.5} />
+                            <X className="w-5 h-5 text-danger/70 mx-auto" strokeWidth={1.5} aria-label="非対応" />
                           )
                         ) : (
                           <span
