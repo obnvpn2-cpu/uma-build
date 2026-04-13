@@ -5,13 +5,13 @@ import { usePathname } from "next/navigation";
 
 export function Header() {
   const pathname = usePathname();
-  const isLab = pathname === "/lab" || pathname === "/";
+  const isLab = pathname === "/lab";
   const isPricing = pathname === "/pricing";
 
   return (
     <header className="sticky top-0 z-50 border-b border-white/10 bg-black/30 backdrop-blur-xl">
       <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
-        <Link href="/lab" className="flex items-center gap-2">
+        <Link href="/" className="flex items-center gap-2">
           <span className="font-mincho text-xl font-bold text-accent text-glow-yellow">
             UmaBuild
           </span>
