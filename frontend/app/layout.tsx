@@ -27,9 +27,37 @@ const dmMono = DM_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "UmaBuild - ノーコード競馬予想AIビルダー",
+  metadataBase: new URL("https://uma-build.vercel.app"),
+  title: {
+    default: "UmaBuild — ノーコード競馬予想AIビルダー",
+    template: "%s | UmaBuild",
+  },
   description:
-    "クリック操作だけで自分オリジナルの競馬AIを作れる。特徴量を選んでボタンを押すだけ。",
+    "競馬の予想AIをプログラミングなしで作れる。81の特徴量から選ぶだけで、LightGBMが自動学習。バックテストで回収率を即確認。",
+  keywords: [
+    "競馬AI",
+    "競馬予想",
+    "ノーコード",
+    "LightGBM",
+    "バックテスト",
+    "回収率",
+    "機械学習",
+    "UmaBuild",
+  ],
+  openGraph: {
+    title: "UmaBuild — ノーコード競馬予想AIビルダー",
+    description:
+      "競馬の予想AIをプログラミングなしで作れる。81の特徴量から選ぶだけで、LightGBMが自動学習。",
+    type: "website",
+    locale: "ja_JP",
+    siteName: "UmaBuild",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "UmaBuild — ノーコード競馬予想AIビルダー",
+    description:
+      "競馬の予想AIをプログラミングなしで作れる。81の特徴量から選ぶだけで、LightGBMが自動学習。",
+  },
 };
 
 export default function RootLayout({
