@@ -23,5 +23,6 @@ venv/
 trained_models/*.pkl
 trained_models/*.json
 
-# Keep cache CSV for deployment
+# Keep cache files for deployment
 !data/feature_table_cache.csv
+!data/feature_table_cache.parquet

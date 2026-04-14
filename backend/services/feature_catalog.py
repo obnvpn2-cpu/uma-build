@@ -5,7 +5,7 @@ Each feature maps to computed columns in the feature_table.
 """
 
 import logging
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -176,14 +176,16 @@ FEATURE_CATALOG: List[Dict[str, Any]] = [
         ],
     },
     # -----------------------------------------------------------------------
-    # 9. 複勝オッズ (Place Odds)
+    # 9. オッズ・人気 (Odds & Popularity)
     # -----------------------------------------------------------------------
     {
-        "id": "place_odds",
-        "name": "複勝オッズ",
-        "description": "複勝オッズの上下限・レンジ（バックテスト専用）",
+        "id": "odds_popularity",
+        "name": "オッズ・人気",
+        "description": "単勝オッズ・人気順位・複勝オッズ（発走前の市場評価）",
         "icon": "📈",
         "features": [
+            {"id": "win_odds", "label": "単勝オッズ", "description": "単勝オッズ（確定）", "default_on": False},
+            {"id": "popularity", "label": "人気順位", "description": "単勝人気順位（1=1番人気）", "default_on": False},
             {"id": "fuku_odds_low", "label": "複勝オッズ下限", "description": "複勝オッズの下限値", "default_on": False},
             {"id": "fuku_odds_high", "label": "複勝オッズ上限", "description": "複勝オッズの上限値", "default_on": False},
             {"id": "fuku_odds_range", "label": "複勝オッズ幅", "description": "3着以内の不確実性指標（上限-下限）", "default_on": False},
@@ -298,7 +300,9 @@ _FEATURE_ID_TO_COLUMNS: Dict[str, List[str]] = {
     "train_wood_avg_pace": ["train_wood_avg_pace"],
     "train_total_count_30d": ["train_total_count_30d"],
     "train_hanro_ratio": ["train_hanro_ratio"],
-    # Place odds
+    # Odds & popularity
+    "win_odds": ["win_odds"],
+    "popularity": ["popularity"],
     "fuku_odds_low": ["fuku_odds_low"],
     "fuku_odds_high": ["fuku_odds_high"],
     "fuku_odds_range": ["fuku_odds_range"],

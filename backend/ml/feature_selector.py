@@ -9,7 +9,7 @@ from typing import List, Optional
 
 import pandas as pd
 
-from services.feature_catalog import get_feature_columns, get_all_feature_ids
+from services.feature_catalog import get_all_feature_ids, get_feature_columns
 
 logger = logging.getLogger(__name__)
 

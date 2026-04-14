@@ -8,8 +8,8 @@ import logging
 import os
 import pickle
 import uuid
-from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import asdict, dataclass
+from typing import Any, Dict, List, Optional
 
 import lightgbm as lgb
 import numpy as np
@@ -22,11 +22,26 @@ MODELS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "trained_m
 os.makedirs(MODELS_DIR, exist_ok=True)
 
 
+def finish_to_relevance(finish_order: pd.Series) -> pd.Series:
+    """Convert finish position to LambdaRank relevance labels.
+
+    Mapping: 1st→4, 2nd→3, 3rd→2, 4th→1, 5th+→0
+    """
+    return (
+        finish_order
+        .clip(lower=1)
+        .map(lambda f: max(0, 5 - int(f)) if f <= 5 else 0)
+        .fillna(0)
+        .astype(int)
+    )
+
+
 @dataclass
 class TrainConfig:
     """Configuration for LightGBM training."""
 
     target_col: str = "target_win"
+    objective_type: str = "lambdarank"  # "lambdarank" or "binary"
     learning_rate: float = 0.05
     num_leaves: int = 63
     max_depth: int = 8
@@ -41,6 +56,23 @@ class TrainConfig:
 
     def to_lgb_params(self) -> Dict[str, Any]:
         """Convert to LightGBM parameter dict."""
+        if self.objective_type == "lambdarank":
+            return {
+                "objective": "lambdarank",
+                "metric": "ndcg",
+                "ndcg_eval_at": [1, 3, 5],
+                "learning_rate": self.learning_rate,
+                "num_leaves": self.num_leaves,
+                "max_depth": self.max_depth,
+                "lambda_l2": self.lambda_l2,
+                "feature_fraction": self.feature_fraction,
+                "bagging_fraction": self.bagging_fraction,
+                "bagging_freq": self.bagging_freq,
+                "min_child_samples": self.min_child_samples,
+                "verbose": self.verbose,
+                "force_col_wise": True,
+                "seed": 42,
+            }
         return {
             "objective": "binary",
             "metric": "binary_logloss",
@@ -74,20 +106,26 @@ class LGBMPipeline:
         y_train: pd.Series,
         X_val: pd.DataFrame,
         y_val: pd.Series,
+        group_train: Optional[List[int]] = None,
+        group_val: Optional[List[int]] = None,
     ) -> lgb.Booster:
         """Train a LightGBM model with early stopping.
 
         Args:
             X_train: Training features.
-            y_train: Training labels.
+            y_train: Training labels (binary) or relevance (lambdarank).
             X_val: Validation features.
-            y_val: Validation labels.
+            y_val: Validation labels or relevance.
+            group_train: Group sizes for lambdarank (horses per race).
+            group_val: Group sizes for lambdarank validation.
 
         Returns:
             Trained LightGBM Booster.
         """
+        is_rank = self.config.objective_type == "lambdarank"
         logger.info(
-            "Training LightGBM: %d train rows, %d val rows, %d features",
+            "Training LightGBM (%s): %d train rows, %d val rows, %d features",
+            self.config.objective_type,
             len(X_train), len(X_val), X_train.shape[1],
         )
 
@@ -102,11 +140,13 @@ class LGBMPipeline:
 
         train_data = lgb.Dataset(
             X_train, label=y_train,
+            group=group_train if is_rank else None,
             categorical_feature=categorical_cols if categorical_cols else "auto",
             free_raw_data=False,
         )
         val_data = lgb.Dataset(
             X_val, label=y_val,
+            group=group_val if is_rank else None,
             reference=train_data,
             categorical_feature=categorical_cols if categorical_cols else "auto",
             free_raw_data=False,
@@ -129,21 +169,39 @@ class LGBMPipeline:
         )
 
         # Collect metrics
-        self.train_metrics = {
-            "best_iteration": self.model.best_iteration,
-            "best_val_logloss": float(self.model.best_score.get("val", {}).get(
-                "binary_logloss", np.nan
-            )),
-            "n_features": len(self.feature_names),
-            "n_train": len(X_train),
-            "n_val": len(X_val),
-        }
-
-        logger.info(
-            "Training complete. Best iteration: %d, Val logloss: %.4f",
-            self.train_metrics["best_iteration"],
-            self.train_metrics["best_val_logloss"],
-        )
+        if is_rank:
+            val_ndcg = self.model.best_score.get("val", {})
+            self.train_metrics = {
+                "best_iteration": self.model.best_iteration,
+                "best_val_ndcg1": float(val_ndcg.get("ndcg@1", np.nan)),
+                "best_val_ndcg3": float(val_ndcg.get("ndcg@3", np.nan)),
+                "objective": "lambdarank",
+                "n_features": len(self.feature_names),
+                "n_train": len(X_train),
+                "n_val": len(X_val),
+            }
+            logger.info(
+                "Training complete. Best iteration: %d, Val NDCG@1: %.4f, NDCG@3: %.4f",
+                self.train_metrics["best_iteration"],
+                self.train_metrics["best_val_ndcg1"],
+                self.train_metrics["best_val_ndcg3"],
+            )
+        else:
+            self.train_metrics = {
+                "best_iteration": self.model.best_iteration,
+                "best_val_logloss": float(self.model.best_score.get("val", {}).get(
+                    "binary_logloss", np.nan
+                )),
+                "objective": "binary",
+                "n_features": len(self.feature_names),
+                "n_train": len(X_train),
+                "n_val": len(X_val),
+            }
+            logger.info(
+                "Training complete. Best iteration: %d, Val logloss: %.4f",
+                self.train_metrics["best_iteration"],
+                self.train_metrics["best_val_logloss"],
+            )
 
         return self.model
 
