@@ -11,7 +11,7 @@ import logging
 import os
 import sqlite3
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -524,10 +524,6 @@ def _compute_agent_stats(
 
     This modifies df in-place, adding columns like {prefix}_win_rate, etc.
     """
-    finish_numeric = _safe_float(df[finish_col])
-    is_win = (finish_numeric == 1).astype(float)
-    is_in3 = (finish_numeric <= 3).astype(float)
-
     agent_groups = df.groupby(agent_col)
     total_agents = len(agent_groups)
     log_interval = max(1, total_agents // 10)
@@ -543,7 +539,6 @@ def _compute_agent_stats(
             if len(past) == 0:
                 continue
 
-            n = len(past)
             past_finish = _safe_float(past[finish_col])
             past_win = (past_finish == 1).astype(float)
             past_in3 = (past_finish <= 3).astype(float)
@@ -680,7 +675,11 @@ def build_feature_table(db_path: str, output_path: Optional[str] = None) -> pd.D
 
         if output_path:
             os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-            df.to_csv(output_path, index=False)
+            # Prefer parquet if path ends with .parquet, otherwise CSV
+            if output_path.endswith(".parquet"):
+                df.to_parquet(output_path, index=False, engine="pyarrow")
+            else:
+                df.to_csv(output_path, index=False)
             logger.info("Feature table saved to: %s", output_path)
 
         return df

@@ -21,7 +21,6 @@ import logging
 import os
 import sqlite3
 import sys
-from datetime import timedelta
 
 import numpy as np
 import pandas as pd
@@ -664,7 +663,7 @@ def step7_join_place_odds(conn: sqlite3.Connection) -> None:
 
 
 def step8_build_cache(db_path: str) -> None:
-    """Build feature_table_cache.csv using the feature builder."""
+    """Build feature_table_cache.parquet using the feature builder."""
     # Add backend root to path so we can import services
     backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if backend_dir not in sys.path:
@@ -672,7 +671,7 @@ def step8_build_cache(db_path: str) -> None:
 
     from services.feature_builder import build_feature_table
 
-    output_path = os.path.join(os.path.dirname(db_path), "feature_table_cache.csv")
+    output_path = os.path.join(os.path.dirname(db_path), "feature_table_cache.parquet")
     df = build_feature_table(db_path, output_path=output_path)
     logger.info("Feature table cache: %d rows, %d columns → %s",
                 df.shape[0], df.shape[1], output_path)

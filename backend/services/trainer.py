@@ -141,6 +141,7 @@ def run_training(
         "distance_breakdown": backtest_result.get("distance_breakdown", []),
         "calibration": backtest_result.get("calibration", []),
         "train_metrics": train_result.get("train_metrics", {}),
+        "cv_metrics": train_result.get("cv_metrics", {}),
         "meta": {
             **train_result.get("meta", {}),
             "total_elapsed_sec": round(elapsed, 1),

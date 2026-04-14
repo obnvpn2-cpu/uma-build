@@ -7,14 +7,13 @@ with time-series split validation.
 import logging
 import os
 import time
-from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-import numpy as np
 import pandas as pd
 
-from ml.feature_selector import select_columns, filter_available_columns
-from ml.pipeline import LGBMPipeline, TrainConfig
+from ml.feature_selector import filter_available_columns, select_columns
+from ml.pipeline import TrainConfig
+from ml.walk_forward import walk_forward_cv
 from services.feature_builder import build_feature_table, generate_demo_feature_table
 
 logger = logging.getLogger(__name__)
@@ -41,18 +40,20 @@ def _load_feature_table(
     Returns:
         Feature table DataFrame.
     """
-    # Check if a cached feature table exists
-    cache_path = os.path.join(
-        os.path.dirname(db_path) if os.path.exists(os.path.dirname(db_path)) else "data",
-        "feature_table_cache.csv",
-    )
+    # Check if a cached feature table exists (prefer parquet over CSV)
+    data_dir = os.path.dirname(db_path) if os.path.exists(os.path.dirname(db_path)) else "data"
+    cache_parquet = os.path.join(data_dir, "feature_table_cache.parquet")
+    cache_csv = os.path.join(data_dir, "feature_table_cache.csv")
 
-    if os.path.exists(cache_path):
-        logger.info("Loading cached feature table from: %s", cache_path)
-        df = pd.read_csv(cache_path, low_memory=False)
+    if os.path.exists(cache_parquet):
+        logger.info("Loading cached feature table (parquet): %s", cache_parquet)
+        df = pd.read_parquet(cache_parquet, engine="pyarrow")
+    elif os.path.exists(cache_csv):
+        logger.info("Loading cached feature table (CSV): %s", cache_csv)
+        df = pd.read_csv(cache_csv, low_memory=False)
     elif os.path.exists(db_path):
         logger.info("Building feature table from DB: %s", db_path)
-        df = build_feature_table(db_path, output_path=cache_path)
+        df = build_feature_table(db_path, output_path=cache_parquet)
     elif DEMO_MODE:
         logger.warning("DB not found at %s. Using DEMO MODE with synthetic data.", db_path)
         # Scale demo data based on data_years
@@ -83,21 +84,38 @@ def _time_series_split(
     df: pd.DataFrame,
     train_frac: float = 0.8,
 ) -> tuple:
-    """Split data chronologically (no shuffling for time-series data).
+    """Split data chronologically by race (no shuffling, races kept intact).
+
+    Splits on race boundaries so all horses in the same race stay together.
+    This is essential for LambdaRank grouping.
 
     Args:
-        df: Feature table sorted by date.
+        df: Feature table.
         train_frac: Fraction of data for training.
 
     Returns:
         Tuple of (train_df, val_df).
     """
+    # Sort by date then race_key so horses in the same race are contiguous
+    sort_cols = []
     if "race_date" in df.columns:
-        df = df.sort_values("race_date").reset_index(drop=True)
+        sort_cols.append("race_date")
+    if "race_key" in df.columns:
+        sort_cols.append("race_key")
+    if sort_cols:
+        df = df.sort_values(sort_cols).reset_index(drop=True)
 
-    split_idx = int(len(df) * train_frac)
-    train_df = df.iloc[:split_idx].copy()
-    val_df = df.iloc[split_idx:].copy()
+    # Split on race boundaries to keep all horses in a race together
+    if "race_key" in df.columns:
+        race_keys = df["race_key"].unique()
+        split_race_idx = int(len(race_keys) * train_frac)
+        train_races = set(race_keys[:split_race_idx])
+        train_df = df[df["race_key"].isin(train_races)].copy()
+        val_df = df[~df["race_key"].isin(train_races)].copy()
+    else:
+        split_idx = int(len(df) * train_frac)
+        train_df = df.iloc[:split_idx].copy()
+        val_df = df.iloc[split_idx:].copy()
 
     logger.info(
         "Time-series split: %d train, %d val (%.0f%% / %.0f%%)",
@@ -165,77 +183,60 @@ def quick_train(
     # Drop rows with missing target
     df = df.dropna(subset=[target_col])
 
-    # 3. Time-series split
-    train_df, val_df = _time_series_split(df, train_frac=0.8)
+    # Sort by date + race_key for time-series integrity
+    sort_cols = [c for c in ["race_date", "race_key"] if c in df.columns]
+    if sort_cols:
+        df = df.sort_values(sort_cols).reset_index(drop=True)
 
-    X_train = train_df[feature_cols].copy()
-    y_train = train_df[target_col].copy()
-    X_val = val_df[feature_cols].copy()
-    y_val = val_df[target_col].copy()
-
-    # Fill NaN with median for numeric columns
-    for col in feature_cols:
-        if X_train[col].dtype in [np.float64, np.float32, np.int64, np.int32, float, int]:
-            median_val = X_train[col].median()
-            X_train[col] = X_train[col].fillna(median_val)
-            X_val[col] = X_val[col].fillna(median_val)
-        else:
-            # Categorical: fill with mode or "unknown"
-            mode_val = X_train[col].mode()
-            fill_val = mode_val.iloc[0] if len(mode_val) > 0 else "unknown"
-            X_train[col] = X_train[col].fillna(fill_val)
-            X_val[col] = X_val[col].fillna(fill_val)
-
-    # 4. Train
+    # 3. Train with walk-forward CV (3 folds)
     if config is None:
         config = TrainConfig(target_col=target_col)
-    pipeline = LGBMPipeline(config=config)
-    pipeline.train(X_train, y_train, X_val, y_val)
 
-    # 5. Evaluate
-    val_preds = pipeline.predict(X_val)
+    # Fallback to binary if lambdarank prerequisites missing
+    if config.objective_type == "lambdarank":
+        if "race_key" not in df.columns or "finish_order" not in df.columns:
+            logger.warning(
+                "race_key or finish_order missing — falling back to binary objective"
+            )
+            config.objective_type = "binary"
 
-    # Build predictions DataFrame for backtest
-    predictions_df = val_df[["race_key", "horse_key", "finish_order"]].copy()
-    if "race_date" in val_df.columns:
-        predictions_df["race_date"] = val_df["race_date"]
-    if "win_odds" in val_df.columns:
-        predictions_df["win_odds"] = val_df["win_odds"]
-    if "surface" in val_df.columns:
-        predictions_df["surface"] = val_df["surface"]
-    if "track_condition" in val_df.columns:
-        predictions_df["track_condition"] = val_df["track_condition"]
-    if "distance" in val_df.columns:
-        predictions_df["distance"] = val_df["distance"]
-    if "tansho_payout" in val_df.columns:
-        predictions_df["tansho_payout"] = val_df["tansho_payout"]
-    predictions_df["pred_prob"] = val_preds
-    predictions_df["actual_win"] = y_val.values
+    cv_result = walk_forward_cv(
+        df=df,
+        feature_cols=feature_cols,
+        target_col=target_col,
+        config=config,
+        n_folds=3,
+    )
 
-    # Feature importance
-    fi_df = pipeline.feature_importance()
-    feature_importance = fi_df.head(20).to_dict(orient="records")
-
-    # Save model
-    model_path = pipeline.save()
+    if cv_result.get("error"):
+        return {
+            "error": cv_result["error"],
+            "model_id": None,
+        }
 
     elapsed = time.time() - start_time
     logger.info("quick_train completed in %.1f seconds", elapsed)
 
-    # 6. Return results
+    predictions_df = cv_result["predictions_df"]
+    n_val = len(predictions_df)
+    n_total = len(df)
+
+    # 4. Return results
     return {
-        "model_id": pipeline.model_id,
-        "model_path": model_path,
+        "model_id": cv_result["model_id"],
+        "model_path": cv_result["model_path"],
         "predictions_df": predictions_df,
-        "feature_importance": feature_importance,
-        "train_metrics": pipeline.train_metrics,
+        "feature_importance": cv_result["feature_importance"],
+        "train_metrics": cv_result["train_metrics"],
+        "cv_metrics": cv_result.get("cv_metrics", {}),
         "meta": {
             "n_features": len(feature_cols),
             "feature_names": feature_cols,
-            "n_train": len(X_train),
-            "n_val": len(X_val),
+            "n_train": n_total - n_val,
+            "n_val": n_val,
             "data_years": data_years,
             "target_col": target_col,
+            "cv_folds": 3,
             "elapsed_sec": round(elapsed, 1),
         },
     }
