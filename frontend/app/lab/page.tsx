@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Step } from "@/lib/types";
 import { Stepper } from "@/components/ui/Stepper";
@@ -20,6 +20,7 @@ import { ColdStartLoader } from "@/components/ui/ColdStartLoader";
 import { useFeatureSelection } from "@/hooks/useFeatureSelection";
 import { useLearning } from "@/hooks/useLearning";
 import { useAttempts } from "@/hooks/useAttempts";
+import { sendEvent } from "@/lib/gtm";
 
 export default function LabPage() {
   const [step, setStep] = useState<Step>(1);
@@ -43,6 +44,10 @@ export default function LabPage() {
   const { isLoading: learningLoading, results, error, startLearning } = useLearning();
   const { used, max, remaining, refresh } = useAttempts(isPro);
 
+  useEffect(() => {
+    sendEvent("lab_start");
+  }, []);
+
   const handleLearn = useCallback(async () => {
     if (selectedIds.size < 2) {
       setToast({ message: "2つ以上の特徴量を選択してください", type: "error" });
@@ -53,9 +58,11 @@ export default function LabPage() {
       return;
     }
 
+    sendEvent("learn_submit", { feature_count: selectedIds.size });
     const result = await startLearning(Array.from(selectedIds));
     refresh();
     if (result.ok) {
+      sendEvent("learn_complete", { feature_count: selectedIds.size });
       setStep(3);
     }
   }, [selectedIds, remaining, startLearning, refresh]);
