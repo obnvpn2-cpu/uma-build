@@ -1,15 +1,10 @@
 name: ETL Postprocess
 
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
-    inputs:
-      mode:
-        description: 'Run mode (demo uses sample data)'
-        required: false
-        default: 'demo'
-        type: choice
-        options:
-          - demo
 
   schedule:
     # Every Monday 03:00 UTC (12:00 JST) — reminder to run local ETL

@@ -12,6 +12,12 @@ cd "$(dirname "$0")/.."
 
 DB="${DB_PATH:-data/jravan.db}"
 
+if [[ ! -f "$DB" ]]; then
+  echo "ERROR: Database not found at $DB" >&2
+  echo "Run EveryDB2 to export data first, or set DB_PATH." >&2
+  exit 1
+fi
+
 echo "=== UmaBuild Weekly ETL ==="
 echo "DB: $DB"
 echo ""
