@@ -25,7 +25,7 @@ os.makedirs(MODELS_DIR, exist_ok=True)
 def finish_to_relevance(finish_order: pd.Series) -> pd.Series:
     """Convert finish position to LambdaRank relevance labels.
 
-    Mapping: 1st→4, 2nd→3, 3rd→2, 4th-5th→1, 6th+→0
+    Mapping: 1st→4, 2nd→3, 3rd→2, 4th→1, 5th+→0
     """
     return (
         finish_order

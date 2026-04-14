@@ -80,52 +80,6 @@ def _load_feature_table(
     return df
 
 
-def _time_series_split(
-    df: pd.DataFrame,
-    train_frac: float = 0.8,
-) -> tuple:
-    """Split data chronologically by race (no shuffling, races kept intact).
-
-    Splits on race boundaries so all horses in the same race stay together.
-    This is essential for LambdaRank grouping.
-
-    Args:
-        df: Feature table.
-        train_frac: Fraction of data for training.
-
-    Returns:
-        Tuple of (train_df, val_df).
-    """
-    # Sort by date then race_key so horses in the same race are contiguous
-    sort_cols = []
-    if "race_date" in df.columns:
-        sort_cols.append("race_date")
-    if "race_key" in df.columns:
-        sort_cols.append("race_key")
-    if sort_cols:
-        df = df.sort_values(sort_cols).reset_index(drop=True)
-
-    # Split on race boundaries to keep all horses in a race together
-    if "race_key" in df.columns:
-        race_keys = df["race_key"].unique()
-        split_race_idx = int(len(race_keys) * train_frac)
-        train_races = set(race_keys[:split_race_idx])
-        train_df = df[df["race_key"].isin(train_races)].copy()
-        val_df = df[~df["race_key"].isin(train_races)].copy()
-    else:
-        split_idx = int(len(df) * train_frac)
-        train_df = df.iloc[:split_idx].copy()
-        val_df = df.iloc[split_idx:].copy()
-
-    logger.info(
-        "Time-series split: %d train, %d val (%.0f%% / %.0f%%)",
-        len(train_df), len(val_df),
-        100 * len(train_df) / len(df), 100 * len(val_df) / len(df),
-    )
-
-    return train_df, val_df
-
-
 def quick_train(
     selected_features: List[str],
     db_path: str = DEFAULT_DB_PATH,

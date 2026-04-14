@@ -77,7 +77,16 @@ def walk_forward_cv(
     if sort_cols:
         df = df.sort_values(sort_cols).reset_index(drop=True)
 
-    race_keys = df["race_key"].unique() if "race_key" in df.columns else np.arange(len(df))
+    has_race_key = "race_key" in df.columns
+    if has_race_key:
+        race_keys = df["race_key"].unique()
+    else:
+        # Fallback: treat each row as its own "race"
+        df = df.copy()
+        df["_row_id"] = np.arange(len(df))
+        race_keys = df["_row_id"].unique()
+    group_col = "race_key" if has_race_key else "_row_id"
+
     folds = _compute_fold_boundaries(race_keys, n_folds=n_folds)
 
     all_val_predictions = []
@@ -88,8 +97,8 @@ def walk_forward_cv(
         train_race_set = set(race_keys[:val_start_idx])
         val_race_set = set(race_keys[val_start_idx:val_end_idx])
 
-        train_mask = df["race_key"].isin(train_race_set)
-        val_mask = df["race_key"].isin(val_race_set)
+        train_mask = df[group_col].isin(train_race_set)
+        val_mask = df[group_col].isin(val_race_set)
 
         train_df = df[train_mask]
         val_df = df[val_mask]
@@ -115,7 +124,7 @@ def walk_forward_cv(
                 X_val[col] = X_val[col].fillna(fill_val)
 
         # Prepare labels and groups
-        if is_rank and "finish_order" in train_df.columns:
+        if is_rank and has_race_key and "finish_order" in train_df.columns:
             y_train = finish_to_relevance(train_df["finish_order"])
             y_val = finish_to_relevance(val_df["finish_order"])
             group_train = train_df.groupby("race_key", sort=False).size().tolist()
@@ -134,7 +143,9 @@ def walk_forward_cv(
         val_preds = pipeline.predict(X_val)
 
         # Collect validation predictions
-        pred_df = val_df[["race_key", "horse_key", "finish_order"]].copy()
+        base_cols = [c for c in ["race_key", "horse_key", "finish_order"]
+                     if c in val_df.columns]
+        pred_df = val_df[base_cols].copy()
         for extra in ["race_date", "win_odds", "surface", "track_condition",
                        "distance", "tansho_payout"]:
             if extra in val_df.columns:
