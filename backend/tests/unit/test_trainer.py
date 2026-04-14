@@ -18,10 +18,11 @@ from services.trainer import _cache_results, _results_cache, get_cached_results,
 
 def test_cache_and_retrieve(tmp_path, monkeypatch):
     """_cache_results -> get_cached_results round-trip."""
-    # Redirect RESULTS_DIR to tmp
+    # Redirect RESULTS_DIR and isolate in-memory cache
     import services.trainer as trainer_mod
 
     monkeypatch.setattr(trainer_mod, "RESULTS_DIR", str(tmp_path))
+    monkeypatch.setattr(trainer_mod, "_results_cache", {})
 
     model_id = "test_round_trip_001"
     payload = {
@@ -67,11 +68,15 @@ def test_run_training_returns_masked_results():
 
 @pytest.mark.slow
 def test_run_training_includes_cv_metrics():
-    """run_training result should contain cv_metrics key (or it's masked away)."""
+    """run_training caches full results with cv_metrics before masking."""
     from services.feature_catalog import get_default_feature_ids
 
     features = get_default_feature_ids()[:5]
     result = run_training(selected_feature_ids=features)
 
-    # cv_metrics might be masked for free tier, but model_id should exist
-    assert result.get("model_id") is not None or result.get("error") is not None
+    # The masked result has model_id; check the pre-mask cache has cv_metrics
+    model_id = result.get("model_id")
+    assert model_id is not None
+    cached = get_cached_results(model_id)
+    assert cached is not None
+    assert "cv_metrics" in cached

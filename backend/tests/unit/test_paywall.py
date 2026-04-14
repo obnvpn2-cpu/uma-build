@@ -54,14 +54,20 @@ def test_mask_free_hides_breakdowns():
 
 
 def test_mask_free_shows_summary():
-    """Free tier -> roi/hit_rate/n_bets/n_races are visible."""
+    """Free tier -> roi/hit_rate/n_bets/n_races visible; financials masked."""
     results = _make_full_results()
     masked = mask_results(results, is_pro=False)
     summary = masked["summary"]
+    # Visible fields
     assert summary["roi"] == 12.5
     assert summary["hit_rate"] == 25.0
     assert summary["n_bets"] == 100
     assert summary["n_races"] == 100
+    # Masked fields
+    assert summary["total_return"] is None
+    assert summary["total_bet"] is None
+    assert summary["profit"] is None
+    assert summary["n_hits"] is None
 
 
 def test_mask_pro_shows_all():
