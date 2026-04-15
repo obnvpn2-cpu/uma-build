@@ -1,0 +1,39 @@
+name: ETL Postprocess
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    # Every Monday 03:00 UTC (12:00 JST) — reminder to run local ETL
+    - cron: '0 3 * * 1'
+
+jobs:
+  etl-demo:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run ETL (DEMO mode — no jravan.db)
+        run: |
+          echo "DEMO mode: jravan.db not available in CI"
+          echo "Running import check only..."
+          python -c "from scripts.postprocess_everydb2 import main; print('Import OK')"
+
+      - name: Verify tests pass
+        run: python -m pytest tests/ -v --tb=short -m "not slow"

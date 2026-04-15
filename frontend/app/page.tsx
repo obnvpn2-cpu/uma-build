@@ -9,6 +9,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { FAQAccordion } from "@/components/lp/FAQAccordion";
+import { CtaLink } from "@/components/lp/CtaLink";
 
 /* ── JSON-LD structured data ── */
 const jsonLd = {
@@ -101,13 +102,13 @@ export default function LandingPage() {
               で完成する。
             </p>
             <div className="flex flex-col sm:flex-row gap-4">
-              <Link
+              <CtaLink
                 href="/lab"
                 className="btn-primary pulse-glow inline-flex items-center justify-center gap-2 px-8 py-3.5 rounded-lg text-lg font-bold"
               >
                 無料でAIを作る
                 <ArrowRight className="w-5 h-5" strokeWidth={1.5} />
-              </Link>
+              </CtaLink>
             </div>
             <p className="text-xs text-text-muted">
               登録不要・クレジットカード不要
@@ -508,13 +509,13 @@ export default function LandingPage() {
           <p className="text-text-secondary text-lg">
             登録不要、完全無料で今すぐ始められます。
           </p>
-          <Link
+          <CtaLink
             href="/lab"
             className="btn-primary pulse-glow inline-flex items-center gap-2 px-8 py-3.5 rounded-lg text-lg font-bold"
           >
             無料でAIを作る
             <ArrowRight className="w-5 h-5" strokeWidth={1.5} />
-          </Link>
+          </CtaLink>
         </div>
       </section>
     </>

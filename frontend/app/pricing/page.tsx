@@ -1,6 +1,8 @@
 "use client";
 
+import { useEffect } from "react";
 import Link from "next/link";
+import { sendEvent } from "@/lib/gtm";
 
 const plans = [
   {
@@ -43,6 +45,10 @@ const plans = [
 ];
 
 export default function PricingPage() {
+  useEffect(() => {
+    sendEvent("pricing_view");
+  }, []);
+
   return (
     <div className="max-w-3xl mx-auto px-4 py-12 space-y-8">
       <div className="text-center space-y-2">

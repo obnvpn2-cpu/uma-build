@@ -22,6 +22,11 @@ pip install -r requirements.txt
 python main.py  # http://localhost:8000
 ```
 
+### Weekly ETL
+1. EveryDB2 でデータ更新（Windows GUI、手動）
+2. `cd backend && bash scripts/weekly_etl.sh`
+3. Render に再デプロイ（git push or ダッシュボードから手動）
+
 ## Design
 - Dark theme (surface: #0D1117, accent: #58A6FF)
 - Fonts: Shippori Mincho (headings), DM Mono (numbers), Noto Sans JP (body)
