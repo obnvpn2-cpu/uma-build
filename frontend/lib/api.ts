@@ -5,6 +5,21 @@ export const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:800
 /** Default fetch timeout. Covers Render Free cold starts (up to ~60s). */
 const DEFAULT_TIMEOUT_MS = 90_000;
 
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  if (typeof window === "undefined") return {};
+  try {
+    // Dynamic import to avoid pulling supabase into Edge runtime
+    const { supabase } = await import("./supabase");
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.access_token) {
+      return { Authorization: `Bearer ${session.access_token}` };
+    }
+  } catch {
+    // Auth not available — continue without token
+  }
+  return {};
+}
+
 async function fetchWithTimeout<T>(
   url: string,
   options?: RequestInit,
@@ -48,7 +63,16 @@ async function fetchAPI<T>(
   options?: RequestInit,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): Promise<T> {
-  return fetchWithTimeout<T>(`${API_BASE}${path}`, options, timeoutMs);
+  const authHeaders = await getAuthHeaders();
+  const mergedOptions = {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders,
+      ...(options?.headers || {}),
+    },
+  };
+  return fetchWithTimeout<T>(`${API_BASE}${path}`, mergedOptions, timeoutMs);
 }
 
 /**

@@ -2,6 +2,7 @@
 
 import type { LockedFeature } from "@/lib/types";
 import { Lock } from "lucide-react";
+import { WaitlistForm } from "./WaitlistForm";
 
 interface LockPopupProps {
   lockedFeatures: LockedFeature[];
@@ -38,6 +39,12 @@ export function LockPopup({ lockedFeatures }: LockPopupProps) {
       >
         Proプランで全機能を解放
       </a>
+      <div className="pt-2 border-t border-white/10">
+        <p className="text-xs text-text-muted text-center mb-2">
+          Pro公開時に通知を受け取る
+        </p>
+        <WaitlistForm source="lock_popup" />
+      </div>
     </div>
   );
 }

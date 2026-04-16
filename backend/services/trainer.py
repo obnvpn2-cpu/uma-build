@@ -71,29 +71,30 @@ def get_cached_results(model_id: str) -> Optional[Dict[str, Any]]:
 def run_training(
     selected_feature_ids: List[str],
     db_path: str = DEFAULT_DB_PATH,
+    is_pro: bool = False,
 ) -> Dict[str, Any]:
     """Orchestrate the full training pipeline.
 
     Steps:
-    1. Run quick_train with selected features (always 2yr Free data)
+    1. Run quick_train with selected features
     2. Run backtest on validation predictions
-    3. Apply paywall masking (always Free until auth)
+    3. Apply paywall masking based on subscription status
     4. Cache and return results
 
     Args:
         selected_feature_ids: Feature IDs selected by the user.
         db_path: Path to the JRA-VAN database.
+        is_pro: Whether the user has a Pro subscription.
 
     Returns:
-        Dict with training results (masked as Free).
+        Dict with training results (masked based on plan).
     """
     start_time = time.time()
 
-    # Always 2yr data until auth is implemented
-    data_years = 2
+    data_years = 5 if is_pro else 2
     logger.info(
-        "Starting training: %d features, %d years (always Free until auth)",
-        len(selected_feature_ids), data_years,
+        "Starting training: %d features, %d years (is_pro=%s)",
+        len(selected_feature_ids), data_years, is_pro,
     )
 
     # 2. Run quick training
@@ -151,8 +152,8 @@ def run_training(
     # Cache full results (before masking)
     _cache_results(model_id, full_results)
 
-    # Apply paywall masking (always Free until auth)
-    masked_results = mask_results(full_results, is_pro=False)
+    # Apply paywall masking based on subscription status
+    masked_results = mask_results(full_results, is_pro=is_pro)
 
     logger.info(
         "Training pipeline complete: model_id=%s, elapsed=%.1fs, roi=%.2f%%",

@@ -1,6 +1,6 @@
 """Integration tests for API routers.
 
-Tests FastAPI endpoints via TestClient: features, learn, results, health.
+Tests FastAPI endpoints via TestClient: features, presets, learn, results, health, stripe.
 """
 
 import os
@@ -37,10 +37,28 @@ def test_get_features_defaults():
     assert data["count"] == len(data["default_features"])
 
 
+def test_get_presets():
+    """GET /api/features/presets -> list of preset templates."""
+    resp = client.get("/api/features/presets")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+    assert len(data) == 4
+    # Each preset has required fields
+    for preset in data:
+        assert "id" in preset
+        assert "name" in preset
+        assert "description" in preset
+        assert "icon" in preset
+        assert "features" in preset
+        assert isinstance(preset["features"], list)
+        assert len(preset["features"]) > 0
+
+
 # ---- /api/learn ----
 
 def test_get_limits():
-    """GET /api/learn/limits -> max_attempts = 5."""
+    """GET /api/learn/limits -> max_attempts = 5 (free, no auth)."""
     resp = client.get("/api/learn/limits")
     assert resp.status_code == 200
     data = resp.json()
@@ -76,6 +94,20 @@ def test_results_not_found():
     """GET /api/results/nonexistent -> 404."""
     resp = client.get("/api/results/nonexistent_model_id")
     assert resp.status_code == 404
+
+
+# ---- /api/stripe ----
+
+def test_stripe_checkout_requires_auth():
+    """POST /api/stripe/checkout without auth -> 401."""
+    resp = client.post("/api/stripe/checkout", json={"plan": "monthly"})
+    assert resp.status_code == 401
+
+
+def test_stripe_portal_requires_auth():
+    """POST /api/stripe/portal without auth -> 401."""
+    resp = client.post("/api/stripe/portal")
+    assert resp.status_code == 401
 
 
 # ---- /api/health ----

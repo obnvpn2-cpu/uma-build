@@ -80,6 +80,7 @@ export function useFeatureSelection() {
   return {
     categories: categories ?? [],
     selectedIds,
+    setSelectedIds,
     isLoading: categoriesLoading,
     error: categoriesError,
     toggleFeature,
