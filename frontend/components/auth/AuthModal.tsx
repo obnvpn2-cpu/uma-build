@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { sendEvent } from "@/lib/gtm";
@@ -21,6 +21,18 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
   const [signupSuccess, setSignupSuccess] = useState(false);
 
   const { signInWithEmail, signUpWithEmail, signInWithGoogle } = useAuth();
+
+  // Reset state when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setMode("login");
+      setEmail("");
+      setPassword("");
+      setError("");
+      setLoading(false);
+      setSignupSuccess(false);
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 

@@ -36,6 +36,7 @@ const features = {
 export default function PricingPage() {
   const [cycle, setCycle] = useState<BillingCycle>("yearly");
   const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [checkoutError, setCheckoutError] = useState("");
   const [showAuth, setShowAuth] = useState(false);
   const { user, session } = useAuth();
 
@@ -50,6 +51,7 @@ export default function PricingPage() {
     }
 
     setCheckoutLoading(true);
+    setCheckoutError("");
     try {
       const res = await fetch(`${API_BASE}/api/stripe/checkout`, {
         method: "POST",
@@ -59,13 +61,18 @@ export default function PricingPage() {
         },
         body: JSON.stringify({ plan: cycle }),
       });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setCheckoutError(body.detail || "チェックアウトの開始に失敗しました");
+        return;
+      }
       const data = await res.json();
       if (data.checkout_url) {
         sendEvent("checkout_start", { plan: cycle });
         window.location.href = data.checkout_url;
       }
     } catch {
-      // Error handled silently — user can retry
+      setCheckoutError("ネットワークエラーが発生しました。再度お試しください。");
     } finally {
       setCheckoutLoading(false);
     }
@@ -210,6 +217,10 @@ export default function PricingPage() {
               ? "処理中..."
               : "7日間無料でProを始める"}
           </button>
+
+          {checkoutError && (
+            <p className="text-xs text-danger text-center">{checkoutError}</p>
+          )}
 
           <p className="text-[10px] text-text-muted text-center">
             7日間無料トライアル付き・いつでも解約可

@@ -7,7 +7,10 @@ subscriptions table in Supabase PostgreSQL.
 
 import logging
 import os
+import re
+import time
 from typing import Optional
+from urllib.parse import quote
 
 import httpx
 import jwt
@@ -19,6 +22,15 @@ logger = logging.getLogger(__name__)
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+
+# UUID pattern for user_id validation
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I
+)
+
+# In-memory subscription cache: { user_id: (is_pro, expires_at) }
+_SUB_CACHE: dict[str, tuple[bool, float]] = {}
+_SUB_CACHE_TTL = 60  # seconds
 
 
 class AuthUser:
@@ -51,16 +63,45 @@ def _decode_jwt(token: str) -> Optional[dict]:
         return None
 
 
+def _validate_uuid(value: str) -> bool:
+    """Check if a string is a valid UUID."""
+    return bool(_UUID_RE.match(value))
+
+
 async def _check_subscription(user_id: str) -> bool:
-    """Check if a user has an active Pro subscription via Supabase REST API."""
+    """Check if a user has an active Pro subscription via Supabase REST API.
+
+    Results are cached in-memory for _SUB_CACHE_TTL seconds to avoid
+    hitting Supabase on every request.
+    """
+    # Check cache first
+    cached = _SUB_CACHE.get(user_id)
+    if cached is not None:
+        is_pro, expires_at = cached
+        if time.monotonic() < expires_at:
+            return is_pro
+
+    is_pro = await _fetch_subscription(user_id)
+
+    # Cache the result
+    _SUB_CACHE[user_id] = (is_pro, time.monotonic() + _SUB_CACHE_TTL)
+    return is_pro
+
+
+async def _fetch_subscription(user_id: str) -> bool:
+    """Fetch subscription status from Supabase."""
     if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return False
+    if not _validate_uuid(user_id):
+        logger.warning("Invalid user_id format: %s", user_id)
         return False
     try:
         url = (
             f"{SUPABASE_URL}/rest/v1/subscriptions"
-            f"?user_id=eq.{user_id}"
+            f"?user_id=eq.{quote(user_id, safe='')}"
             f"&plan=eq.pro"
             f"&status=in.(active,trialing)"
+            f"&or=(current_period_end.is.null,current_period_end.gt.now())"
             f"&select=id"
             f"&limit=1"
         )

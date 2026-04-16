@@ -6,7 +6,9 @@ subscription lifecycle management.
 
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Any, Dict
+from urllib.parse import quote
 
 import httpx
 import stripe
@@ -33,6 +35,14 @@ SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 
 
+def _supabase_headers() -> Dict[str, str]:
+    return {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "Content-Type": "application/json",
+    }
+
+
 async def _upsert_subscription(data: Dict[str, Any]) -> None:
     """Upsert subscription record in Supabase via REST API."""
     if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
@@ -40,12 +50,7 @@ async def _upsert_subscription(data: Dict[str, Any]) -> None:
         return
 
     url = f"{SUPABASE_URL}/rest/v1/subscriptions"
-    headers = {
-        "apikey": SUPABASE_SERVICE_ROLE_KEY,
-        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-        "Content-Type": "application/json",
-        "Prefer": "resolution=merge-duplicates",
-    }
+    headers = {**_supabase_headers(), "Prefer": "resolution=merge-duplicates"}
 
     try:
         async with httpx.AsyncClient() as client:
@@ -67,23 +72,27 @@ async def _update_subscription_by_stripe_id(
 
     url = (
         f"{SUPABASE_URL}/rest/v1/subscriptions"
-        f"?stripe_subscription_id=eq.{stripe_subscription_id}"
+        f"?stripe_subscription_id=eq.{quote(stripe_subscription_id, safe='')}"
     )
-    headers = {
-        "apikey": SUPABASE_SERVICE_ROLE_KEY,
-        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-        "Content-Type": "application/json",
-    }
 
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.patch(url, json=updates, headers=headers, timeout=10.0)
+            resp = await client.patch(
+                url, json=updates, headers=_supabase_headers(), timeout=10.0,
+            )
             if resp.status_code not in (200, 204):
                 logger.error("Subscription update failed: %s %s", resp.status_code, resp.text)
             else:
                 logger.info("Subscription updated: %s", stripe_subscription_id)
     except Exception as e:
         logger.error("Subscription update error: %s", e)
+
+
+def _ts_to_iso(ts: int | None) -> str | None:
+    """Convert a UNIX timestamp to an ISO 8601 string."""
+    if ts is None:
+        return None
+    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
 
 
 @router.post("/stripe/checkout")
@@ -133,25 +142,19 @@ async def create_portal_session(
     if not stripe.api_key:
         raise HTTPException(status_code=503, detail="決済サービスが設定されていません")
 
-    # Look up Stripe customer ID from subscription
     if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
         raise HTTPException(status_code=503, detail="データベースが設定されていません")
 
     try:
         url = (
             f"{SUPABASE_URL}/rest/v1/subscriptions"
-            f"?user_id=eq.{user.user_id}"
+            f"?user_id=eq.{quote(user.user_id, safe='')}"
             f"&select=stripe_customer_id"
             f"&limit=1"
         )
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                url,
-                headers={
-                    "apikey": SUPABASE_SERVICE_ROLE_KEY,
-                    "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-                },
-                timeout=5.0,
+                url, headers=_supabase_headers(), timeout=5.0,
             )
             data = resp.json()
 
@@ -184,22 +187,17 @@ async def stripe_webhook(request: Request) -> JSONResponse:
     sig_header = request.headers.get("stripe-signature", "")
 
     if not STRIPE_WEBHOOK_SECRET:
-        logger.warning("STRIPE_WEBHOOK_SECRET not set, accepting webhook without verification")
-        event = stripe.Event.construct_from(
-            stripe.util.convert_to_stripe_object(
-                __import__("json").loads(payload),
-                stripe.api_key,
-            ),
-            stripe.api_key,
+        # Reject webhooks when secret is not configured to prevent forgery
+        logger.error("STRIPE_WEBHOOK_SECRET not set, rejecting webhook")
+        raise HTTPException(status_code=503, detail="Webhook secret not configured")
+
+    try:
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, STRIPE_WEBHOOK_SECRET
         )
-    else:
-        try:
-            event = stripe.Webhook.construct_event(
-                payload, sig_header, STRIPE_WEBHOOK_SECRET
-            )
-        except stripe.SignatureVerificationError:
-            logger.error("Webhook signature verification failed")
-            raise HTTPException(status_code=400, detail="Invalid signature")
+    except stripe.SignatureVerificationError:
+        logger.error("Webhook signature verification failed")
+        raise HTTPException(status_code=400, detail="Invalid signature")
 
     event_type = event["type"]
     logger.info("Stripe webhook: %s", event_type)
@@ -243,17 +241,12 @@ async def _handle_checkout_completed(session: dict) -> None:
         "stripe_subscription_id": subscription_id,
         "plan": "pro",
         "status": status,
-        "current_period_end": (
-            __import__("datetime").datetime.fromtimestamp(
-                period_end, tz=__import__("datetime").timezone.utc
-            ).isoformat()
-            if period_end else None
-        ),
+        "current_period_end": _ts_to_iso(period_end),
     })
 
 
 async def _handle_subscription_updated(subscription: dict) -> None:
-    """Handle customer.subscription.updated — update status."""
+    """Handle customer.subscription.updated — update status and plan."""
     sub_id = subscription.get("id")
     status = subscription.get("status", "active")
     period_end = subscription.get("current_period_end")
@@ -268,13 +261,12 @@ async def _handle_subscription_updated(subscription: dict) -> None:
     }
     mapped_status = status_map.get(status, status)
 
-    updates: Dict[str, Any] = {"status": mapped_status}
+    # Determine plan from status: canceled/unpaid → free, otherwise keep pro
+    plan = "free" if mapped_status in ("canceled",) else "pro"
+
+    updates: Dict[str, Any] = {"status": mapped_status, "plan": plan}
     if period_end:
-        updates["current_period_end"] = (
-            __import__("datetime").datetime.fromtimestamp(
-                period_end, tz=__import__("datetime").timezone.utc
-            ).isoformat()
-        )
+        updates["current_period_end"] = _ts_to_iso(period_end)
 
     await _update_subscription_by_stripe_id(sub_id, updates)
 

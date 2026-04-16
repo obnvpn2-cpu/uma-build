@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Step } from "@/lib/types";
 import { Stepper } from "@/components/ui/Stepper";
@@ -24,14 +24,16 @@ import { useLearning } from "@/hooks/useLearning";
 import { useAttempts } from "@/hooks/useAttempts";
 import { sendEvent } from "@/lib/gtm";
 
-/** Reads ?upgraded=true from URL and shows a toast */
+/** Reads ?upgraded=true from URL and shows a toast, then strips the param */
 function UpgradeChecker({ onUpgraded }: { onUpgraded: () => void }) {
   const searchParams = useSearchParams();
+  const router = useRouter();
   useEffect(() => {
     if (searchParams.get("upgraded") === "true") {
       onUpgraded();
+      router.replace("/lab", { scroll: false });
     }
-  }, [searchParams, onUpgraded]);
+  }, [searchParams, onUpgraded, router]);
   return null;
 }
 

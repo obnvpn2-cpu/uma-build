@@ -29,9 +29,12 @@ async function fetchWithTimeout<T>(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, {
-      headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
       ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(options?.headers || {}),
+      },
+      signal: controller.signal,
     });
 
     if (!res.ok) {
