@@ -15,7 +15,11 @@ FREE_FEATURE_IMPORTANCE_PREVIEW = 3  # Top 3 features
 FREE_CONDITION_PREVIEW = 1    # 1 row only
 
 
-def mask_results(results: Dict[str, Any], is_pro: bool = False) -> Dict[str, Any]:
+def mask_results(
+    results: Dict[str, Any],
+    is_pro: bool = False,
+    is_first_unlock: bool = False,
+) -> Dict[str, Any]:
     """Apply paywall masking to training results.
 
     For free users:
@@ -28,12 +32,18 @@ def mask_results(results: Dict[str, Any], is_pro: bool = False) -> Dict[str, Any
     - future_prediction: Locked (unavailable)
     - overfitting_detection: Locked (unavailable)
 
+    For first_unlock (one-time):
+    - Everything visible (same as Pro)
+    - is_first_unlock=True flag set
+    - is_pro remains False
+
     For pro users:
     - Everything visible
 
     Args:
         results: Full training results dict.
         is_pro: Whether the user is a pro subscriber (server-determined).
+        is_first_unlock: Whether this is the user's first-unlock experience.
 
     Returns:
         Masked results dict.
@@ -43,6 +53,16 @@ def mask_results(results: Dict[str, Any], is_pro: bool = False) -> Dict[str, Any
         return {
             **results,
             "is_pro": True,
+            "is_first_unlock": False,
+            "locked_features": [],
+        }
+
+    if is_first_unlock:
+        # First-unlock: show everything, but flag as non-pro
+        return {
+            **results,
+            "is_pro": False,
+            "is_first_unlock": True,
             "locked_features": [],
         }
 
@@ -86,6 +106,7 @@ def mask_results(results: Dict[str, Any], is_pro: bool = False) -> Dict[str, Any
     masked = {
         "model_id": results.get("model_id"),
         "is_pro": False,
+        "is_first_unlock": False,
         # Partially visible previews
         "summary": masked_summary,
         "yearly_breakdown": yearly_preview if yearly_preview else None,
@@ -94,6 +115,7 @@ def mask_results(results: Dict[str, Any], is_pro: bool = False) -> Dict[str, Any
         # Still fully locked
         "distance_breakdown": None,
         "calibration": None,
+        "future_prediction": None,
         "meta": {
             "n_features": meta.get("n_features"),
             "data_years": data_years,

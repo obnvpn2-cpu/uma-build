@@ -67,15 +67,35 @@ export interface LockedFeature {
   description: string;
 }
 
+export interface FuturePredictionEntry {
+  rank: number;
+  horse_name: string;
+  predicted_score: number;
+  confidence: "high" | "medium" | "low";
+  jockey: string;
+  gate_number: number;
+}
+
+export interface FuturePredictionRace {
+  race_key: string;
+  race_date: string;
+  race_name: string;
+  distance: number;
+  surface: string;
+  entries: FuturePredictionEntry[];
+}
+
 export interface LearnResponse {
   model_id: string | null;
   is_pro: boolean;
+  is_first_unlock?: boolean;
   summary: LearnSummary | null;
   feature_importance: FeatureImportanceItem[] | null;
   condition_breakdown: BreakdownItem[] | null;
   yearly_breakdown: BreakdownItem[] | null;
   distance_breakdown: BreakdownItem[] | null;
   calibration: CalibrationItem[] | null;
+  future_prediction: FuturePredictionRace[] | null;
   meta: Record<string, unknown> | null;
   locked_features: LockedFeature[] | null;
   train_metrics?: Record<string, unknown> | null;
@@ -94,6 +114,28 @@ export interface LimitsResponse {
   used_attempts: number;
   remaining_attempts: number;
   is_pro: boolean;
+}
+
+// Saved models
+export interface SavedModel {
+  id: string;
+  model_id: string;
+  name: string;
+  roi: number | null;
+  hit_rate: number | null;
+  reliability_stars: number | null;
+  n_features: number;
+  feature_ids: string[];
+  data_years: number;
+  created_at: string;
+}
+
+export interface CompareResponse {
+  models: (LearnResponse & { name: string; feature_ids: string[] })[];
+  feature_diff: {
+    common: string[];
+    unique: Record<string, string[]>;
+  };
 }
 
 // UI State

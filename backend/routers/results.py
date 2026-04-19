@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException
 
 from middleware.auth import AuthUser, get_optional_user
+from services.first_unlock import check_first_unlock_for_model
 from services.paywall import mask_results
 from services.trainer import get_cached_results
 
@@ -26,6 +27,7 @@ async def get_results(
     """Retrieve cached training results for a model.
 
     Results are masked based on user's subscription status.
+    If the user has a first-unlock record for this model, full results are shown.
     """
     is_pro = user.is_pro if user else False
     logger.info("GET /api/results/%s (is_pro=%s)", model_id, is_pro)
@@ -37,7 +39,12 @@ async def get_results(
             detail=f"モデル {model_id} の結果が見つかりません。学習結果は一定期間後に削除されます。",
         )
 
-    masked = mask_results(results, is_pro=is_pro)
+    # Check first-unlock for non-pro authenticated users
+    is_first_unlock = False
+    if user and not is_pro:
+        is_first_unlock = await check_first_unlock_for_model(user.user_id, model_id)
+
+    masked = mask_results(results, is_pro=is_pro, is_first_unlock=is_first_unlock)
     return masked
 
 

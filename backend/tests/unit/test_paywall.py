@@ -154,6 +154,43 @@ def test_mask_pro_shows_all():
     assert masked["calibration"] is not None
 
 
+# --- First unlock tests ---
+
+def test_mask_first_unlock_shows_all():
+    """First unlock -> all fields visible, is_first_unlock=True, is_pro=False."""
+    results = _make_full_results()
+    results["future_prediction"] = [{"race_key": "R001", "entries": []}]
+    masked = mask_results(results, is_pro=False, is_first_unlock=True)
+    assert masked["is_pro"] is False
+    assert masked["is_first_unlock"] is True
+    assert masked["locked_features"] == []
+    assert masked["feature_importance"] is not None
+    assert masked["condition_breakdown"] is not None
+    assert masked["yearly_breakdown"] is not None
+    assert masked["distance_breakdown"] is not None
+    assert masked["calibration"] is not None
+    assert masked["future_prediction"] is not None
+
+
+def test_mask_free_locks_future_prediction():
+    """Free tier -> future_prediction is None."""
+    results = _make_full_results()
+    results["future_prediction"] = [{"race_key": "R001", "entries": []}]
+    masked = mask_results(results, is_pro=False)
+    assert masked["future_prediction"] is None
+    assert masked["is_first_unlock"] is False
+
+
+def test_mask_pro_includes_future_prediction():
+    """Pro tier -> future_prediction is preserved."""
+    results = _make_full_results()
+    results["future_prediction"] = [{"race_key": "R001", "entries": []}]
+    masked = mask_results(results, is_pro=True)
+    assert masked["future_prediction"] is not None
+    assert len(masked["future_prediction"]) == 1
+    assert masked["is_first_unlock"] is False
+
+
 # --- Edge cases ---
 
 def test_mask_free_empty_breakdowns():

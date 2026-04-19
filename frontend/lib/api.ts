@@ -1,4 +1,4 @@
-import type { FeatureCategory, JobStatusResponse, LearnRequest, LearnResponse, LimitsResponse } from "./types";
+import type { CompareResponse, FeatureCategory, JobStatusResponse, LearnRequest, LearnResponse, LimitsResponse, SavedModel } from "./types";
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -128,4 +128,41 @@ export async function fetchResults(modelId: string): Promise<LearnResponse> {
   return fetchAPI<LearnResponse>(
     `/api/results/${encodeURIComponent(modelId)}`
   );
+}
+
+// --- Saved Models API ---
+
+export async function fetchSavedModels(): Promise<{ models: SavedModel[]; limit: number; count: number }> {
+  return fetchAPI("/api/models");
+}
+
+export async function saveModel(
+  modelId: string,
+  name: string,
+  featureIds: string[],
+): Promise<{ saved: SavedModel }> {
+  return fetchAPI("/api/models", {
+    method: "POST",
+    body: JSON.stringify({ model_id: modelId, name, feature_ids: featureIds }),
+  });
+}
+
+export async function deleteModel(modelId: string): Promise<{ deleted: boolean }> {
+  return fetchAPI(`/api/models/${encodeURIComponent(modelId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function renameModel(modelId: string, name: string): Promise<{ renamed: boolean }> {
+  return fetchAPI(`/api/models/${encodeURIComponent(modelId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function compareModels(modelIds: string[]): Promise<CompareResponse> {
+  return fetchAPI("/api/models/compare", {
+    method: "POST",
+    body: JSON.stringify({ model_ids: modelIds }),
+  });
 }

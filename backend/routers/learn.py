@@ -60,12 +60,14 @@ class LearnResponse(BaseModel):
 
     model_id: Optional[str] = None
     is_pro: bool = False
+    is_first_unlock: bool = False
     summary: Optional[Dict[str, Any]] = None
     feature_importance: Optional[List[Dict[str, Any]]] = None
     condition_breakdown: Optional[List[Dict[str, Any]]] = None
     yearly_breakdown: Optional[List[Dict[str, Any]]] = None
     distance_breakdown: Optional[List[Dict[str, Any]]] = None
     calibration: Optional[List[Dict[str, Any]]] = None
+    future_prediction: Optional[List[Dict[str, Any]]] = None
     meta: Optional[Dict[str, Any]] = None
     locked_features: Optional[List[Dict[str, Any]]] = None
     train_metrics: Optional[Dict[str, Any]] = None
@@ -128,9 +130,10 @@ async def learn(
     job_id = uuid.uuid4().hex[:8]
     _store_job(job_id, {"status": "training", "result": None, "error": None})
 
+    user_id = user.user_id if user else None
     thread = threading.Thread(
         target=_run_job,
-        args=(job_id, valid_features, is_pro),
+        args=(job_id, valid_features, is_pro, user_id),
         daemon=True,
     )
     thread.start()
@@ -138,10 +141,10 @@ async def learn(
     return {"job_id": job_id, "status": "training"}
 
 
-def _run_job(job_id: str, features: list, is_pro: bool = False) -> None:
+def _run_job(job_id: str, features: list, is_pro: bool = False, user_id: str | None = None) -> None:
     """Execute training in a background thread and update job status."""
     try:
-        results = run_training(selected_feature_ids=features, is_pro=is_pro)
+        results = run_training(selected_feature_ids=features, is_pro=is_pro, user_id=user_id)
         if results.get("error"):
             _store_job(job_id, {"status": "failed", "result": None, "error": results["error"]})
         else:

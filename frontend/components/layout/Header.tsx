@@ -10,6 +10,7 @@ import { LogOut, User, CreditCard } from "lucide-react";
 export function Header() {
   const pathname = usePathname();
   const isLab = pathname === "/lab";
+  const isModels = pathname === "/lab/models";
   const isPricing = pathname === "/pricing";
   const [showAuth, setShowAuth] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
@@ -58,6 +59,25 @@ export function Header() {
                 />
               )}
             </Link>
+
+            {!loading && user && (
+              <Link
+                href="/lab/models"
+                className={`text-sm transition relative py-1 ${
+                  isModels
+                    ? "text-text-primary font-medium"
+                    : "text-text-secondary hover:text-text-primary"
+                }`}
+              >
+                マイモデル
+                {isModels && (
+                  <span
+                    className="absolute -bottom-[17px] left-0 right-0 h-0.5 rounded-full bg-accent"
+                    style={{ boxShadow: "0 0 12px rgba(245,233,50,0.6)" }}
+                  />
+                )}
+              </Link>
+            )}
 
             {!loading && user ? (
               /* Logged in */

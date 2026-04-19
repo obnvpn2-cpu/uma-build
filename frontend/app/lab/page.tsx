@@ -16,6 +16,9 @@ import { ConditionBreakdown } from "@/components/results/ConditionBreakdown";
 import { FeatureImportanceChart } from "@/components/results/FeatureImportanceChart";
 import { LockPopup } from "@/components/paywall/LockPopup";
 import { ProLockSection } from "@/components/paywall/ProLockSection";
+import { FirstUnlockBanner } from "@/components/paywall/FirstUnlockBanner";
+import { FuturePredictionCard } from "@/components/results/FuturePredictionCard";
+import { SaveModelButton } from "@/components/models/SaveModelButton";
 import { DemoNoticeBanner } from "@/components/ui/DemoNoticeBanner";
 import { Toast } from "@/components/ui/Toast";
 import { ColdStartLoader } from "@/components/ui/ColdStartLoader";
@@ -67,6 +70,8 @@ export default function LabPage() {
 
   // Track actual Pro status from backend results
   const resultIsPro = results?.is_pro ?? false;
+  const isFirstUnlock = results?.is_first_unlock ?? false;
+  const showFullResults = resultIsPro || isFirstUnlock;
 
   useEffect(() => {
     sendEvent("lab_start");
@@ -331,6 +336,9 @@ export default function LabPage() {
             transition={{ duration: 0.2 }}
             className="space-y-4"
           >
+            {/* First unlock banner */}
+            {isFirstUnlock && <FirstUnlockBanner />}
+
             {/* DEMO notice banner */}
             <DemoNoticeBanner />
 
@@ -343,7 +351,7 @@ export default function LabPage() {
               {results.yearly_breakdown && results.yearly_breakdown.length > 0 ? (
                 <YearlyROIChart
                   data={results.yearly_breakdown}
-                  isBlurred={!resultIsPro}
+                  isBlurred={!showFullResults}
                 />
               ) : (
                 <ProLockSection title="年別ROI推移" />
@@ -354,7 +362,7 @@ export default function LabPage() {
               results.feature_importance.length > 0 ? (
                 <FeatureImportanceChart
                   data={results.feature_importance}
-                  isBlurred={!resultIsPro}
+                  isBlurred={!showFullResults}
                   categories={categories}
                 />
               ) : (
@@ -367,10 +375,18 @@ export default function LabPage() {
             results.condition_breakdown.length > 0 ? (
               <ConditionBreakdown
                 data={results.condition_breakdown}
-                isBlurred={!resultIsPro}
+                isBlurred={!showFullResults}
               />
             ) : (
               <ProLockSection title="馬場条件別パフォーマンス" />
+            )}
+
+            {/* Future prediction: show if available, otherwise lock section */}
+            {results.future_prediction &&
+            results.future_prediction.length > 0 ? (
+              <FuturePredictionCard races={results.future_prediction} />
+            ) : (
+              <ProLockSection title="未来レース予測" />
             )}
 
             {/* Distance breakdown: show if data exists, otherwise lock */}
@@ -379,7 +395,7 @@ export default function LabPage() {
               <div className="glass p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-semibold">距離別パフォーマンス</h3>
-                  {!resultIsPro && (
+                  {!showFullResults && (
                     <span className="text-xs px-2 py-0.5 rounded-full bg-accent/15 text-accent border border-accent/40">
                       Pro で詳細表示
                     </span>
@@ -442,6 +458,16 @@ export default function LabPage() {
             {results.locked_features && results.locked_features.length > 0 && (
               <LockPopup lockedFeatures={results.locked_features} />
             )}
+
+            {/* Save model */}
+            <SaveModelButton
+              modelId={results.model_id}
+              featureIds={Array.from(selectedIds)}
+              onSaved={() =>
+                setToast({ message: "モデルを保存しました", type: "success" })
+              }
+              onError={(msg) => setToast({ message: msg, type: "error" })}
+            />
 
             {/* Action buttons */}
             <div className="flex justify-center gap-3 pt-2">
