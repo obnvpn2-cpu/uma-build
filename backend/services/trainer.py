@@ -12,6 +12,8 @@ from typing import Any, Dict, List, Optional
 
 from ml.quick_train import DEFAULT_DB_PATH, quick_train
 from services.backtest import run_backtest
+from services.first_unlock import check_first_unlock_available, mark_first_unlock_used
+from services.future_prediction import generate_future_predictions
 from services.paywall import mask_results
 
 logger = logging.getLogger(__name__)
@@ -71,29 +73,33 @@ def get_cached_results(model_id: str) -> Optional[Dict[str, Any]]:
 def run_training(
     selected_feature_ids: List[str],
     db_path: str = DEFAULT_DB_PATH,
+    is_pro: bool = False,
+    user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Orchestrate the full training pipeline.
 
     Steps:
-    1. Run quick_train with selected features (always 2yr Free data)
+    1. Run quick_train with selected features
     2. Run backtest on validation predictions
-    3. Apply paywall masking (always Free until auth)
-    4. Cache and return results
+    3. Generate future race predictions
+    4. Apply paywall masking based on subscription status
+    5. Cache and return results
 
     Args:
         selected_feature_ids: Feature IDs selected by the user.
         db_path: Path to the JRA-VAN database.
+        is_pro: Whether the user has a Pro subscription.
+        user_id: Authenticated user ID (for first-unlock tracking).
 
     Returns:
-        Dict with training results (masked as Free).
+        Dict with training results (masked based on plan).
     """
     start_time = time.time()
 
-    # Always 2yr data until auth is implemented
-    data_years = 2
+    data_years = 5 if is_pro else 2
     logger.info(
-        "Starting training: %d features, %d years (always Free until auth)",
-        len(selected_feature_ids), data_years,
+        "Starting training: %d features, %d years (is_pro=%s)",
+        len(selected_feature_ids), data_years, is_pro,
     )
 
     # 2. Run quick training
@@ -130,6 +136,17 @@ def run_training(
             "calibration": [],
         }
 
+    # Generate future race predictions
+    try:
+        future_preds = generate_future_predictions(
+            model_path=train_result["model_path"],
+            selected_features=selected_feature_ids,
+            db_path=db_path,
+        )
+    except Exception as e:
+        logger.warning("Future prediction failed: %s", e)
+        future_preds = []
+
     # Combine results
     elapsed = time.time() - start_time
     full_results = {
@@ -140,6 +157,7 @@ def run_training(
         "yearly_breakdown": backtest_result.get("yearly_breakdown", []),
         "distance_breakdown": backtest_result.get("distance_breakdown", []),
         "calibration": backtest_result.get("calibration", []),
+        "future_prediction": future_preds,
         "train_metrics": train_result.get("train_metrics", {}),
         "cv_metrics": train_result.get("cv_metrics", {}),
         "meta": {
@@ -151,12 +169,19 @@ def run_training(
     # Cache full results (before masking)
     _cache_results(model_id, full_results)
 
-    # Apply paywall masking (always Free until auth)
-    masked_results = mask_results(full_results, is_pro=False)
+    # Check first-unlock eligibility for non-pro authenticated users
+    is_first_unlock = False
+    if not is_pro and user_id:
+        is_first_unlock = check_first_unlock_available(user_id)
+        if is_first_unlock:
+            mark_first_unlock_used(user_id, model_id)
+
+    # Apply paywall masking based on subscription status
+    masked_results = mask_results(full_results, is_pro=is_pro, is_first_unlock=is_first_unlock)
 
     logger.info(
-        "Training pipeline complete: model_id=%s, elapsed=%.1fs, roi=%.2f%%",
-        model_id, elapsed, backtest_result["summary"].get("roi", 0),
+        "Training pipeline complete: model_id=%s, elapsed=%.1fs, roi=%.2f%%, first_unlock=%s",
+        model_id, elapsed, backtest_result["summary"].get("roi", 0), is_first_unlock,
     )
 
     return masked_results

@@ -1,9 +1,24 @@
-import type { FeatureCategory, JobStatusResponse, LearnRequest, LearnResponse, LimitsResponse } from "./types";
+import type { CompareResponse, FeatureCategory, JobStatusResponse, LearnRequest, LearnResponse, LimitsResponse, SavedModel } from "./types";
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 /** Default fetch timeout. Covers Render Free cold starts (up to ~60s). */
 const DEFAULT_TIMEOUT_MS = 90_000;
+
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  if (typeof window === "undefined") return {};
+  try {
+    // Dynamic import to avoid pulling supabase into Edge runtime
+    const { supabase } = await import("./supabase");
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.access_token) {
+      return { Authorization: `Bearer ${session.access_token}` };
+    }
+  } catch {
+    // Auth not available — continue without token
+  }
+  return {};
+}
 
 async function fetchWithTimeout<T>(
   url: string,
@@ -14,9 +29,12 @@ async function fetchWithTimeout<T>(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, {
-      headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
       ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(options?.headers || {}),
+      },
+      signal: controller.signal,
     });
 
     if (!res.ok) {
@@ -48,7 +66,16 @@ async function fetchAPI<T>(
   options?: RequestInit,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): Promise<T> {
-  return fetchWithTimeout<T>(`${API_BASE}${path}`, options, timeoutMs);
+  const authHeaders = await getAuthHeaders();
+  const mergedOptions = {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders,
+      ...(options?.headers || {}),
+    },
+  };
+  return fetchWithTimeout<T>(`${API_BASE}${path}`, mergedOptions, timeoutMs);
 }
 
 /**
@@ -101,4 +128,41 @@ export async function fetchResults(modelId: string): Promise<LearnResponse> {
   return fetchAPI<LearnResponse>(
     `/api/results/${encodeURIComponent(modelId)}`
   );
+}
+
+// --- Saved Models API ---
+
+export async function fetchSavedModels(): Promise<{ models: SavedModel[]; limit: number; count: number }> {
+  return fetchAPI("/api/models");
+}
+
+export async function saveModel(
+  modelId: string,
+  name: string,
+  featureIds: string[],
+): Promise<{ saved: SavedModel }> {
+  return fetchAPI("/api/models", {
+    method: "POST",
+    body: JSON.stringify({ model_id: modelId, name, feature_ids: featureIds }),
+  });
+}
+
+export async function deleteModel(modelId: string): Promise<{ deleted: boolean }> {
+  return fetchAPI(`/api/models/${encodeURIComponent(modelId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function renameModel(modelId: string, name: string): Promise<{ renamed: boolean }> {
+  return fetchAPI(`/api/models/${encodeURIComponent(modelId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function compareModels(modelIds: string[]): Promise<CompareResponse> {
+  return fetchAPI("/api/models/compare", {
+    method: "POST",
+    body: JSON.stringify({ model_ids: modelIds }),
+  });
 }

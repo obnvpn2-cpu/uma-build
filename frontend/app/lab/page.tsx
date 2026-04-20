@@ -1,10 +1,12 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, Suspense } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Step } from "@/lib/types";
 import { Stepper } from "@/components/ui/Stepper";
 import { FeatureSelector } from "@/components/features/FeatureSelector";
+import { PresetSelector } from "@/components/features/PresetSelector";
 import { QuickLearnButton } from "@/components/learning/QuickLearnButton";
 import { LearningProgress } from "@/components/learning/LearningProgress";
 import { RemainingAttempts } from "@/components/learning/RemainingAttempts";
@@ -14,6 +16,9 @@ import { ConditionBreakdown } from "@/components/results/ConditionBreakdown";
 import { FeatureImportanceChart } from "@/components/results/FeatureImportanceChart";
 import { LockPopup } from "@/components/paywall/LockPopup";
 import { ProLockSection } from "@/components/paywall/ProLockSection";
+import { FirstUnlockBanner } from "@/components/paywall/FirstUnlockBanner";
+import { FuturePredictionCard } from "@/components/results/FuturePredictionCard";
+import { SaveModelButton } from "@/components/models/SaveModelButton";
 import { DemoNoticeBanner } from "@/components/ui/DemoNoticeBanner";
 import { Toast } from "@/components/ui/Toast";
 import { ColdStartLoader } from "@/components/ui/ColdStartLoader";
@@ -22,6 +27,19 @@ import { useLearning } from "@/hooks/useLearning";
 import { useAttempts } from "@/hooks/useAttempts";
 import { sendEvent } from "@/lib/gtm";
 
+/** Reads ?upgraded=true from URL and shows a toast, then strips the param */
+function UpgradeChecker({ onUpgraded }: { onUpgraded: () => void }) {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  useEffect(() => {
+    if (searchParams.get("upgraded") === "true") {
+      onUpgraded();
+      router.replace("/lab", { scroll: false });
+    }
+  }, [searchParams, onUpgraded, router]);
+  return null;
+}
+
 export default function LabPage() {
   const [step, setStep] = useState<Step>(1);
   const [toast, setToast] = useState<{
@@ -29,7 +47,12 @@ export default function LabPage() {
     type: "success" | "error" | "info";
   } | null>(null);
 
-  const isPro = false; // Always free until auth (Phase 2)
+  const handleUpgraded = useCallback(() => {
+    setToast({ message: "Proプランへのアップグレードが完了しました！", type: "success" });
+  }, []);
+
+  // Pro status comes from results (server-determined)
+  const isPro = false; // Overridden per-result by results.is_pro from backend
 
   const {
     categories,
@@ -39,10 +62,16 @@ export default function LabPage() {
     toggleFeature,
     toggleAll,
     resetDefaults,
+    setSelectedIds,
   } = useFeatureSelection();
 
   const { isLoading: learningLoading, results, error, startLearning } = useLearning();
   const { used, max, remaining, refresh } = useAttempts(isPro);
+
+  // Track actual Pro status from backend results
+  const resultIsPro = results?.is_pro ?? false;
+  const isFirstUnlock = results?.is_first_unlock ?? false;
+  const showFullResults = resultIsPro || isFirstUnlock;
 
   useEffect(() => {
     sendEvent("lab_start");
@@ -71,13 +100,31 @@ export default function LabPage() {
     (newStep: Step) => {
       // Only allow going forward to step 3 if results exist
       if (newStep === 3 && !results) return;
+      const prevStep = step;
       setStep(newStep);
+      sendEvent("step_transition", {
+        from: prevStep,
+        to: newStep,
+        direction: newStep > prevStep ? "forward" : "backward",
+      });
     },
-    [results]
+    [results, step]
+  );
+
+  const handlePresetApply = useCallback(
+    (featureIds: string[]) => {
+      setSelectedIds(new Set(featureIds));
+      setToast({ message: "プリセットを適用しました", type: "info" });
+    },
+    [setSelectedIds]
   );
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
+      <Suspense>
+        <UpgradeChecker onUpgraded={handleUpgraded} />
+      </Suspense>
+
       {/* Header */}
       <div className="text-center space-y-1">
         <h1 className="font-mincho text-2xl font-bold text-glow-yellow text-accent">
@@ -124,10 +171,21 @@ export default function LabPage() {
               </div>
             ) : (
               <>
+                {/* Preset templates */}
+                <div className="mb-4">
+                  <PresetSelector onApply={handlePresetApply} />
+                </div>
+
                 <FeatureSelector
                   categories={categories}
                   selectedIds={selectedIds}
-                  onToggleFeature={toggleFeature}
+                  onToggleFeature={(id) => {
+                    toggleFeature(id);
+                    sendEvent("feature_select", {
+                      feature_id: id,
+                      action: selectedIds.has(id) ? "deselect" : "select",
+                    });
+                  }}
                   onToggleAll={toggleAll}
                   onResetDefaults={resetDefaults}
                 />
@@ -145,7 +203,14 @@ export default function LabPage() {
                         個の特徴量を選択中
                       </span>
                       <button
-                        onClick={() => setStep(2)}
+                        onClick={() => {
+                          setStep(2);
+                          sendEvent("step_transition", {
+                            from: 1,
+                            to: 2,
+                            direction: "forward",
+                          });
+                        }}
                         disabled={selectedIds.size < 2}
                         className="btn-primary px-6 py-2.5 rounded-lg sm:ml-auto text-sm w-full sm:w-auto"
                       >
@@ -271,30 +336,33 @@ export default function LabPage() {
             transition={{ duration: 0.2 }}
             className="space-y-4"
           >
+            {/* First unlock banner */}
+            {isFirstUnlock && <FirstUnlockBanner />}
+
             {/* DEMO notice banner */}
             <DemoNoticeBanner />
 
             {/* Summary */}
             {results.summary && <BacktestSummary summary={results.summary} />}
 
-            {/* Charts grid — locked sections for Free users */}
+            {/* Charts grid — locked/preview sections based on is_pro */}
             <div className="grid gap-4 sm:grid-cols-2">
-              {/* Yearly ROI: show if data exists, otherwise lock */}
+              {/* Yearly ROI: show if data exists (preview for Free, full for Pro) */}
               {results.yearly_breakdown && results.yearly_breakdown.length > 0 ? (
                 <YearlyROIChart
                   data={results.yearly_breakdown}
-                  isBlurred={!isPro}
+                  isBlurred={!showFullResults}
                 />
               ) : (
                 <ProLockSection title="年別ROI推移" />
               )}
 
-              {/* Feature importance: show if data exists, otherwise lock */}
+              {/* Feature importance: show if data exists (preview for Free, full for Pro) */}
               {results.feature_importance &&
               results.feature_importance.length > 0 ? (
                 <FeatureImportanceChart
                   data={results.feature_importance}
-                  isBlurred={!isPro}
+                  isBlurred={!showFullResults}
                   categories={categories}
                 />
               ) : (
@@ -302,15 +370,23 @@ export default function LabPage() {
               )}
             </div>
 
-            {/* Condition breakdown: show if data exists, otherwise lock */}
+            {/* Condition breakdown: show if data exists (preview for Free, full for Pro) */}
             {results.condition_breakdown &&
             results.condition_breakdown.length > 0 ? (
               <ConditionBreakdown
                 data={results.condition_breakdown}
-                isBlurred={!isPro}
+                isBlurred={!showFullResults}
               />
             ) : (
               <ProLockSection title="馬場条件別パフォーマンス" />
+            )}
+
+            {/* Future prediction: show if available, otherwise lock section */}
+            {results.future_prediction &&
+            results.future_prediction.length > 0 ? (
+              <FuturePredictionCard races={results.future_prediction} />
+            ) : (
+              <ProLockSection title="未来レース予測" />
             )}
 
             {/* Distance breakdown: show if data exists, otherwise lock */}
@@ -319,7 +395,7 @@ export default function LabPage() {
               <div className="glass p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-semibold">距離別パフォーマンス</h3>
-                  {!isPro && (
+                  {!showFullResults && (
                     <span className="text-xs px-2 py-0.5 rounded-full bg-accent/15 text-accent border border-accent/40">
                       Pro で詳細表示
                     </span>
@@ -382,6 +458,16 @@ export default function LabPage() {
             {results.locked_features && results.locked_features.length > 0 && (
               <LockPopup lockedFeatures={results.locked_features} />
             )}
+
+            {/* Save model */}
+            <SaveModelButton
+              modelId={results.model_id}
+              featureIds={Array.from(selectedIds)}
+              onSaved={() =>
+                setToast({ message: "モデルを保存しました", type: "success" })
+              }
+              onError={(msg) => setToast({ message: msg, type: "error" })}
+            />
 
             {/* Action buttons */}
             <div className="flex justify-center gap-3 pt-2">

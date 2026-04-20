@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from routers import features, learn, results
+from routers import features, learn, models, results, stripe
 
 logger = logging.getLogger(__name__)
 
@@ -31,14 +31,16 @@ ALLOWED_ORIGINS = os.environ.get(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
 app.include_router(features.router, prefix="/api")
 app.include_router(learn.router, prefix="/api")
 app.include_router(results.router, prefix="/api")
+app.include_router(stripe.router, prefix="/api")
+app.include_router(models.router, prefix="/api")
 
 
 @app.exception_handler(Exception)
