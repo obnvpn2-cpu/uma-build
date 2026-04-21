@@ -24,13 +24,17 @@ if SENTRY_DSN:
 
 app = FastAPI(title="UmaBuild API", version="0.2.0")
 
-ALLOWED_ORIGINS = os.environ.get(
-    "ALLOWED_ORIGINS", "http://localhost:3000"
-).split(",")
+ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+    if o.strip()
+]
+ALLOWED_ORIGIN_REGEX = os.environ.get("ALLOWED_ORIGIN_REGEX") or None
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=ALLOWED_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
