@@ -22,7 +22,8 @@ echo "=== UmaBuild Weekly ETL ==="
 echo "DB: $DB"
 echo ""
 
-python scripts/postprocess_everydb2.py --db "$DB" --build-cache
+python scripts/postprocess_everydb2.py --db "$DB" --build-cache \
+  --cache-output-years 5 --cache-history-buffer-years 5
 
 echo ""
 echo "ETL complete: feature_table_cache updated"

@@ -9,11 +9,12 @@ This script:
   5. Aggregates training data (N_HANRO/N_WOOD_CHIP) into N_UMA_RACE
   6. Joins payout data (N_HARAI) into N_UMA_RACE
   7. Joins place odds (N_ODDS_TANPUKU) into N_UMA_RACE
-  8. Optionally builds feature_table_cache.csv
+  8. Optionally builds feature_table_cache.parquet
 
 Usage:
     cd uma-build/backend
-    python scripts/postprocess_everydb2.py [--db data/jravan.db] [--build-cache]
+    python scripts/postprocess_everydb2.py [--db data/jravan.db] [--build-cache] \
+        [--cache-output-years 5] [--cache-history-buffer-years 5]
 """
 
 import argparse
@@ -662,8 +663,16 @@ def step7_join_place_odds(conn: sqlite3.Connection) -> None:
         logger.info("  %s: updated %d rows (rowcount=%d)", col_name, len(valid), cursor.rowcount)
 
 
-def step8_build_cache(db_path: str) -> None:
-    """Build feature_table_cache.parquet using the feature builder."""
+def step8_build_cache(
+    db_path: str,
+    output_years: int = 5,
+    history_buffer_years: int = 5,
+) -> None:
+    """Build feature_table_cache.parquet using the feature builder.
+
+    The parquet holds `output_years` of output rows, while as-of statistics
+    are computed using `output_years + history_buffer_years` of history.
+    """
     # Add backend root to path so we can import services
     backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if backend_dir not in sys.path:
@@ -672,9 +681,18 @@ def step8_build_cache(db_path: str) -> None:
     from services.feature_builder import build_feature_table
 
     output_path = os.path.join(os.path.dirname(db_path), "feature_table_cache.parquet")
-    df = build_feature_table(db_path, output_path=output_path)
-    logger.info("Feature table cache: %d rows, %d columns → %s",
-                df.shape[0], df.shape[1], output_path)
+    df = build_feature_table(
+        db_path,
+        output_path=output_path,
+        output_years=output_years,
+        history_buffer_years=history_buffer_years,
+    )
+    logger.info(
+        "Feature table cache: %d rows, %d columns → %s "
+        "(output_years=%d, history_buffer_years=%d)",
+        df.shape[0], df.shape[1], output_path,
+        output_years, history_buffer_years,
+    )
 
 
 def main() -> None:
@@ -688,12 +706,26 @@ def main() -> None:
         "--build-cache",
         action="store_true",
         default=True,
-        help="Build feature_table_cache.csv after post-processing (default: True)",
+        help="Build feature_table_cache.parquet after post-processing (default: True)",
     )
     parser.add_argument(
         "--no-cache",
         action="store_true",
-        help="Skip building feature_table_cache.csv",
+        help="Skip building feature_table_cache.parquet",
+    )
+    parser.add_argument(
+        "--cache-output-years",
+        type=int,
+        default=5,
+        help="Years of rows to include in the parquet output (default: 5)",
+    )
+    parser.add_argument(
+        "--cache-history-buffer-years",
+        type=int,
+        default=5,
+        help="Extra years loaded for as-of history but not kept in the output "
+             "(default: 5). Larger values cover longer jockey/trainer careers "
+             "at the cost of build time.",
     )
     args = parser.parse_args()
 
@@ -753,7 +785,11 @@ def main() -> None:
 
         if args.build_cache and not args.no_cache:
             logger.info("--- Step 8: Build Feature Cache ---")
-            step8_build_cache(db_path)
+            step8_build_cache(
+                db_path,
+                output_years=args.cache_output_years,
+                history_buffer_years=args.cache_history_buffer_years,
+            )
 
     except Exception:
         conn.rollback()

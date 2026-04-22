@@ -14,7 +14,7 @@ import pandas as pd
 from ml.feature_selector import filter_available_columns, select_columns
 from ml.pipeline import TrainConfig
 from ml.walk_forward import walk_forward_cv
-from services.feature_builder import build_feature_table, generate_demo_feature_table
+from services.feature_builder import generate_demo_feature_table
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,28 @@ DEMO_MODE = True
 DEFAULT_DB_PATH = os.path.join(
     os.path.dirname(os.path.dirname(__file__)), "data", "jravan.db"
 )
+
+
+def cache_is_available(db_path: str = DEFAULT_DB_PATH) -> bool:
+    """Return True if the feature table cache can serve a training request.
+
+    Used by the POST /learn preflight to fail fast with a 503 when the
+    operator has not yet rebuilt the cache, rather than starting a job
+    that would fail minutes later inside a background thread.
+
+    The cache is considered available when:
+      - feature_table_cache.parquet exists, or
+      - feature_table_cache.csv exists, or
+      - the DB itself is absent and DEMO_MODE is enabled (synthetic data path).
+    """
+    data_dir = os.path.dirname(db_path) if os.path.exists(os.path.dirname(db_path)) else "data"
+    if os.path.exists(os.path.join(data_dir, "feature_table_cache.parquet")):
+        return True
+    if os.path.exists(os.path.join(data_dir, "feature_table_cache.csv")):
+        return True
+    if not os.path.exists(db_path) and DEMO_MODE:
+        return True
+    return False
 
 
 def _load_feature_table(
@@ -51,14 +73,15 @@ def _load_feature_table(
     elif os.path.exists(cache_csv):
         logger.info("Loading cached feature table (CSV): %s", cache_csv)
         df = pd.read_csv(cache_csv, low_memory=False)
-    elif os.path.exists(db_path):
-        logger.info("Building feature table from DB: %s", db_path)
-        df = build_feature_table(db_path, output_path=cache_parquet)
-    elif DEMO_MODE:
+    elif not os.path.exists(db_path) and DEMO_MODE:
         logger.warning("DB not found at %s. Using DEMO MODE with synthetic data.", db_path)
-        # Scale demo data based on data_years
         n_races = data_years * 250  # ~250 races per year (simplified)
         df = generate_demo_feature_table(n_races=n_races)
+    elif os.path.exists(db_path):
+        raise RuntimeError(
+            "特徴量キャッシュが見つかりません。管理者で "
+            "'python scripts/postprocess_everydb2.py --db data/jravan.db' を実行してください。"
+        )
     else:
         raise FileNotFoundError(
             f"Database not found: {db_path}. Set DEMO_MODE=True for synthetic data."

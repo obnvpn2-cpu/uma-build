@@ -6,7 +6,7 @@ import { getSessionId, setLastModelId, incrementDailyAttempts } from "@/lib/stor
 import type { LearnResponse } from "@/lib/types";
 
 const POLL_INTERVAL_MS = 3000;
-const MAX_POLL_ATTEMPTS = 120; // 3s × 120 = 6 min max
+const MAX_POLL_ATTEMPTS = 240; // 3s × 240 = 12 min max (initial feature cache build can take 6-10min)
 
 export type StartLearningResult =
   | { ok: true; data: LearnResponse }

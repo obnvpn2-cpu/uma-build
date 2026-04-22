@@ -11,7 +11,7 @@ import logging
 import os
 import sqlite3
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -87,6 +87,22 @@ COLUMN_CANDIDATES: Dict[str, List[str]] = {
 }
 
 
+# Canonical columns that must be numeric downstream (LightGBM, backtest,
+# walk_forward). Raw EveryDB2 stores many of these as zero-padded strings
+# (e.g. KakuteiJyuni -> "03"), so we coerce them before writing the cache.
+NUMERIC_CANONICAL_COLUMNS: List[str] = [
+    "distance", "finish_order", "time", "last3f",
+    "corner3", "corner4", "passing_order",
+    "win_odds", "popularity",
+    "body_weight", "body_weight_diff",
+    "weight_carried", "prize_money",
+    "waku", "umaban", "sex", "age", "field_size",
+    "grade", "race_class",
+    "fuku_odds_low", "fuku_odds_high", "fuku_odds_range",
+    "tansho_payout", "fukusho_payout",
+]
+
+
 def _resolve_column(df: pd.DataFrame, canonical: str) -> Optional[str]:
     """Find the actual column name in df for a canonical name."""
     candidates = COLUMN_CANDIDATES.get(canonical, [canonical])
@@ -142,26 +158,102 @@ def _classify_running_style(avg_corner4_pct: float) -> int:
 # Core builder
 # ---------------------------------------------------------------------------
 
-def _load_race_table(conn: sqlite3.Connection) -> Optional[pd.DataFrame]:
-    """Attempt to load the race master table."""
+def _resolve_date_column(
+    cursor: sqlite3.Cursor, table: str
+) -> Tuple[Optional[str], Optional[str]]:
+    """Resolve the date column for the given table.
+
+    Returns (mode, column_name) where mode is 'RaceDate' (YYYY-MM-DD),
+    'Year' (YYYY fallback), or (None, None) if neither exists.
+    """
+    try:
+        cursor.execute(f"PRAGMA table_info([{table}])")
+        columns = {row[1] for row in cursor.fetchall()}
+    except sqlite3.Error as e:
+        logger.warning("PRAGMA failed for %s: %s", table, e)
+        return None, None
+
+    for cand in ["RaceDate", "RACE_DATE", "racedate", "race_date"]:
+        if cand in columns:
+            return "RaceDate", cand
+    for cand in ["Year", "YEAR", "year"]:
+        if cand in columns:
+            return "Year", cand
+    return None, None
+
+
+def _get_max_race_date(
+    cursor: sqlite3.Cursor, table: str, date_col: str, mode: str
+) -> Optional[str]:
+    """Return the maximum date in the table as a string.
+
+    RaceDate mode → 'YYYY-MM-DD', Year mode → 'YYYY'. None on failure.
+    """
+    try:
+        cursor.execute(f"SELECT MAX([{date_col}]) FROM [{table}]")
+        row = cursor.fetchone()
+    except sqlite3.Error as e:
+        logger.warning("Failed to get MAX(%s) from %s: %s", date_col, table, e)
+        return None
+    if not row or row[0] is None:
+        return None
+    val = str(row[0])
+    if mode == "Year":
+        return val[:4]
+    return val
+
+
+def _compute_cutoff(max_date: str, mode: str, years: int) -> Optional[str]:
+    """Subtract `years` from `max_date`. Returns string in same format as input."""
+    try:
+        if mode == "RaceDate":
+            dt = datetime.strptime(max_date[:10], "%Y-%m-%d")
+            return (dt - timedelta(days=years * 365)).strftime("%Y-%m-%d")
+        if mode == "Year":
+            return str(int(max_date) - years)
+    except (ValueError, TypeError) as e:
+        logger.warning("Failed to compute cutoff from max=%s mode=%s: %s", max_date, mode, e)
+    return None
+
+
+def _load_race_table(
+    conn: sqlite3.Connection,
+    cutoff: Optional[str] = None,
+    date_col: Optional[str] = None,
+) -> Optional[pd.DataFrame]:
+    """Attempt to load the race master table, optionally filtered by date."""
     cursor = conn.cursor()
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
     tables = [row[0] for row in cursor.fetchall()]
     logger.info("Available tables: %s", tables)
 
-    # Try common table names
     race_table_candidates = ["N_RACE", "n_race", "RACE", "race"]
     for t in race_table_candidates:
         if t in tables:
             logger.info("Using race table: %s", t)
+            if cutoff and date_col:
+                logger.info("N_RACE filter: [%s] >= %s", date_col, cutoff)
+                return pd.read_sql(
+                    f"SELECT * FROM [{t}] WHERE [{date_col}] >= ?",
+                    conn,
+                    params=(cutoff,),
+                )
             return pd.read_sql(f"SELECT * FROM [{t}]", conn)
 
     logger.warning("No race table found among: %s", tables)
     return None
 
 
-def _load_uma_race_table(conn: sqlite3.Connection) -> Optional[pd.DataFrame]:
-    """Attempt to load the horse-race result table."""
+def _load_uma_race_table(
+    conn: sqlite3.Connection,
+    cutoff: Optional[str] = None,
+    date_col: Optional[str] = None,
+    n_race_table: str = "N_RACE",
+    race_key_col: str = "RaceKey",
+) -> Optional[pd.DataFrame]:
+    """Attempt to load the horse-race result table, filtered by RaceKey
+    derived from the date cutoff on the race master table.
+    """
     cursor = conn.cursor()
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
     tables = [row[0] for row in cursor.fetchall()]
@@ -171,6 +263,27 @@ def _load_uma_race_table(conn: sqlite3.Connection) -> Optional[pd.DataFrame]:
     for t in uma_race_candidates:
         if t in tables:
             logger.info("Using uma_race table: %s", t)
+            if cutoff and date_col:
+                cursor.execute(f"PRAGMA table_info([{t}])")
+                uma_cols = {row[1] for row in cursor.fetchall()}
+                cursor.execute(f"PRAGMA table_info([{n_race_table}])")
+                race_cols = {row[1] for row in cursor.fetchall()}
+                if race_key_col in uma_cols and race_key_col in race_cols:
+                    logger.info(
+                        "N_UMA_RACE filter: %s IN (SELECT %s FROM %s WHERE [%s] >= %s)",
+                        race_key_col, race_key_col, n_race_table, date_col, cutoff,
+                    )
+                    return pd.read_sql(
+                        f"SELECT * FROM [{t}] WHERE [{race_key_col}] IN "
+                        f"(SELECT [{race_key_col}] FROM [{n_race_table}] "
+                        f"WHERE [{date_col}] >= ?)",
+                        conn,
+                        params=(cutoff,),
+                    )
+                logger.warning(
+                    "%s column missing in N_RACE or N_UMA_RACE; loading full %s",
+                    race_key_col, t,
+                )
             return pd.read_sql(f"SELECT * FROM [{t}]", conn)
 
     logger.warning("No uma_race table found among: %s", tables)
@@ -522,94 +635,139 @@ def _compute_agent_stats(
 ) -> None:
     """Compute as-of stats for an agent (jockey or trainer) in-place.
 
-    This modifies df in-place, adding columns like {prefix}_win_rate, etc.
+    Vectorized per agent using cumulative sums on groupby output. For each
+    agent the per-row "past" aggregates (mean win rate over prior races,
+    per-distance/surface/course/horse breakdowns, recent-20 window) are
+    derived from cumulative sums that exclude the current row, which is
+    O(n) per agent vs. O(n²) for the earlier scalar implementation.
     """
-    agent_groups = df.groupby(agent_col)
+    agent_groups = df.groupby(agent_col, sort=False)
     total_agents = len(agent_groups)
-    log_interval = max(1, total_agents // 10)
+    log_interval = max(1, total_agents // 20)
 
-    for idx, (agent_id, agent_df) in enumerate(agent_groups):
+    def _past_ratio(is_flag: pd.Series, ones: pd.Series, grp: pd.Series):
+        """Past rate of is_flag within each group, excluding current row."""
+        gw = is_flag.groupby(grp, sort=False).cumsum() - is_flag
+        gn = ones.groupby(grp, sort=False).cumsum() - 1.0
+        with np.errstate(invalid="ignore", divide="ignore"):
+            return np.where(gn > 0, gw / gn, np.nan), gn
+
+    for idx, (_, agent_df) in enumerate(agent_groups):
         if idx % log_interval == 0:
             logger.info("  %s progress: %d / %d", prefix, idx, total_agents)
 
-        indices = agent_df.index.tolist()
+        n = len(agent_df)
+        if n <= 1:
+            continue
 
-        for pos, i in enumerate(indices):
-            past = agent_df.iloc[:pos]
-            if len(past) == 0:
-                continue
+        finish = _safe_float(agent_df[finish_col])
+        is_win = (finish == 1).astype(float)
+        is_in3 = (finish <= 3).astype(float)
+        ones = pd.Series(1.0, index=agent_df.index)
 
-            past_finish = _safe_float(past[finish_col])
-            past_win = (past_finish == 1).astype(float)
-            past_in3 = (past_finish <= 3).astype(float)
+        # Agent-wide as-of (cumulative over prior races, excluding current)
+        past_n = ones.cumsum() - 1.0
+        past_win = is_win.cumsum() - is_win
+        past_in3 = is_in3.cumsum() - is_in3
+        with np.errstate(invalid="ignore", divide="ignore"):
+            win_rate = np.where(past_n > 0, past_win / past_n, np.nan)
+            in3_rate = np.where(past_n > 0, past_in3 / past_n, np.nan)
+        df.loc[agent_df.index, f"{prefix}_win_rate"] = win_rate
+        df.loc[agent_df.index, f"{prefix}_in3_rate"] = in3_rate
 
-            df.at[i, f"{prefix}_win_rate"] = past_win.mean()
-            df.at[i, f"{prefix}_in3_rate"] = past_in3.mean()
+        # Recent 20: rolling mean of is_win over up to 20 prior races
+        r20 = is_win.shift(1).rolling(20, min_periods=1).mean()
+        df.loc[agent_df.index, f"{prefix}_recent20_win_rate"] = r20.values
 
-            # Distance-specific
-            if c_distance_cat and c_distance_cat in df.columns:
-                cur_dist = df.at[i, c_distance_cat]
-                if cur_dist is not None:
-                    dist_past = past[past[c_distance_cat] == cur_dist]
-                    if len(dist_past) > 0:
-                        dp_finish = _safe_float(dist_past[finish_col])
-                        df.at[i, f"{prefix}_dist_win_rate"] = (dp_finish == 1).mean()
+        # Distance-specific win rate (per distance category within agent)
+        if c_distance_cat and c_distance_cat in agent_df.columns:
+            rate, _ = _past_ratio(is_win, ones, agent_df[c_distance_cat])
+            df.loc[agent_df.index, f"{prefix}_dist_win_rate"] = rate
 
-            # Surface-specific
-            if c_surface and c_surface in df.columns:
-                cur_surface = df.at[i, c_surface]
-                surf_past = past[past[c_surface] == cur_surface]
-                if len(surf_past) > 0:
-                    sp_finish = _safe_float(surf_past[finish_col])
-                    df.at[i, f"{prefix}_surface_win_rate"] = (sp_finish == 1).mean()
+        # Surface-specific win rate
+        if c_surface and c_surface in agent_df.columns:
+            rate, _ = _past_ratio(is_win, ones, agent_df[c_surface])
+            df.loc[agent_df.index, f"{prefix}_surface_win_rate"] = rate
 
-            # Recent 20
-            recent20 = past.tail(20)
-            r20_finish = _safe_float(recent20[finish_col])
-            df.at[i, f"{prefix}_recent20_win_rate"] = (r20_finish == 1).mean()
+        # Course-specific win rate (per track)
+        if c_place and c_place in agent_df.columns:
+            rate, _ = _past_ratio(is_win, ones, agent_df[c_place])
+            df.loc[agent_df.index, f"{prefix}_course_win_rate"] = rate
 
-            # Course-specific
-            if c_place and c_place in df.columns:
-                cur_place = df.at[i, c_place]
-                place_past = past[past[c_place] == cur_place]
-                if len(place_past) > 0:
-                    pp_finish = _safe_float(place_past[finish_col])
-                    df.at[i, f"{prefix}_course_win_rate"] = (pp_finish == 1).mean()
-
-            # Horse combo stats
-            if c_horse_key and c_horse_key in df.columns:
-                cur_horse = df.at[i, c_horse_key]
-                combo_past = past[past[c_horse_key] == cur_horse]
-                df.at[i, f"{prefix}_horse_combo_n"] = len(combo_past)
-                if len(combo_past) > 0:
-                    cp_finish = _safe_float(combo_past[finish_col])
-                    df.at[i, f"{prefix}_horse_combo_win_rate"] = (cp_finish == 1).mean()
+        # Horse-combo stats (per agent × horse)
+        if c_horse_key and c_horse_key in agent_df.columns:
+            rate, combo_n = _past_ratio(is_win, ones, agent_df[c_horse_key])
+            df.loc[agent_df.index, f"{prefix}_horse_combo_n"] = combo_n.values
+            df.loc[agent_df.index, f"{prefix}_horse_combo_win_rate"] = rate
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
-def build_feature_table(db_path: str, output_path: Optional[str] = None) -> pd.DataFrame:
+def build_feature_table(
+    db_path: str,
+    output_path: Optional[str] = None,
+    output_years: Optional[int] = None,
+    history_buffer_years: int = 5,
+) -> pd.DataFrame:
     """Build the feature table from JRA-VAN EveryDB2 SQLite database.
 
     Args:
         db_path: Path to the EveryDB2 SQLite file.
-        output_path: Optional path to save the feature table as CSV.
+        output_path: Optional path to save the feature table (parquet or CSV).
+        output_years: If set, the final saved feature table is trimmed to the
+            last N years relative to MAX(RaceDate). The SQL load still reads
+            (output_years + history_buffer_years) years so as-of statistics
+            have sufficient history. None = load and save everything.
+        history_buffer_years: Extra years loaded beyond output_years, used as
+            as-of history. Ignored when output_years is None.
 
     Returns:
         DataFrame with computed features.
     """
-    logger.info("Building feature table from: %s", db_path)
+    logger.info(
+        "Building feature table from: %s (output_years=%s, history_buffer=%d)",
+        db_path, output_years, history_buffer_years,
+    )
 
     if not os.path.exists(db_path):
         raise FileNotFoundError(f"Database not found: {db_path}")
 
     conn = sqlite3.connect(db_path)
     try:
-        # Load tables
-        race_df = _load_race_table(conn)
-        uma_race_df = _load_uma_race_table(conn)
+        cursor = conn.cursor()
+
+        # Determine the date column and cutoffs
+        date_mode, date_col = _resolve_date_column(cursor, "N_RACE")
+        cutoff_load: Optional[str] = None
+        cutoff_output: Optional[str] = None
+        if output_years is not None:
+            if date_mode and date_col:
+                max_date = _get_max_race_date(cursor, "N_RACE", date_col, date_mode)
+                if max_date:
+                    cutoff_load = _compute_cutoff(
+                        max_date, date_mode, output_years + history_buffer_years
+                    )
+                    cutoff_output = _compute_cutoff(max_date, date_mode, output_years)
+                    logger.info(
+                        "Date filter mode=%s col=%s max=%s cutoff_load=%s cutoff_output=%s",
+                        date_mode, date_col, max_date, cutoff_load, cutoff_output,
+                    )
+                else:
+                    logger.warning(
+                        "MAX(%s) returned None; loading all data", date_col,
+                    )
+            else:
+                logger.warning(
+                    "No date column resolved on N_RACE; loading all data "
+                    "(output_years=%d ignored)",
+                    output_years,
+                )
+
+        # Load tables (filtered if cutoff_load is set)
+        race_df = _load_race_table(conn, cutoff_load, date_col)
+        uma_race_df = _load_uma_race_table(conn, cutoff_load, date_col)
 
         if race_df is None or uma_race_df is None:
             raise ValueError("Could not load required tables from the database.")
@@ -672,6 +830,30 @@ def build_feature_table(db_path: str, output_path: Optional[str] = None) -> pd.D
                     rename_map[actual] = canonical
         if rename_map:
             df = df.rename(columns=rename_map)
+
+        # Coerce canonical numeric columns to numbers. EveryDB2 often stores
+        # these as zero-padded strings ("03"), which breaks downstream
+        # consumers like walk_forward.finish_to_relevance (clip/comparison).
+        for c in NUMERIC_CANONICAL_COLUMNS:
+            if c in df.columns and df[c].dtype == object:
+                df[c] = pd.to_numeric(df[c], errors="coerce")
+
+        # Trim the output to the last `output_years` while as-of features
+        # were computed using the full loaded history.
+        if cutoff_output and "race_date" in df.columns:
+            before = len(df)
+            dt_series = pd.to_datetime(df["race_date"], errors="coerce")
+            cutoff_ts = pd.to_datetime(cutoff_output, errors="coerce")
+            if pd.notna(cutoff_ts):
+                df = df[dt_series >= cutoff_ts].copy()
+                logger.info(
+                    "Output trim: %d -> %d rows (cutoff=%s)",
+                    before, len(df), cutoff_output,
+                )
+            else:
+                logger.warning(
+                    "Could not parse cutoff_output=%s; keeping all rows", cutoff_output,
+                )
 
         if output_path:
             os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)

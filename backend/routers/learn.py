@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from middleware.auth import AuthUser, get_optional_user
+from ml.quick_train import cache_is_available
 from services.feature_catalog import get_all_feature_ids
 from services.trainer import run_training
 
@@ -68,6 +69,7 @@ class LearnResponse(BaseModel):
     distance_breakdown: Optional[List[Dict[str, Any]]] = None
     calibration: Optional[List[Dict[str, Any]]] = None
     future_prediction: Optional[List[Dict[str, Any]]] = None
+    future_prediction_meta: Optional[Dict[str, Any]] = None
     meta: Optional[Dict[str, Any]] = None
     locked_features: Optional[List[Dict[str, Any]]] = None
     train_metrics: Optional[Dict[str, Any]] = None
@@ -111,7 +113,17 @@ async def learn(
             detail="少なくとも2つの特徴量を選択してください。",
         )
 
-    # 2. Check daily attempt limit
+    # 2. Preflight: fail fast if the feature cache is missing rather than
+    # starting a background job that will fail minutes later. Quota is not
+    # consumed by a 503 response because the increment happens below.
+    if not cache_is_available():
+        logger.error("POST /learn blocked: feature cache missing")
+        raise HTTPException(
+            status_code=503,
+            detail="特徴量キャッシュが未生成です。管理者にお問い合わせください。",
+        )
+
+    # 3. Check daily attempt limit
     rate_key = user.user_id if user else (request.session_id or "anonymous")
     max_attempts = MAX_PRO_DAILY_ATTEMPTS if is_pro else MAX_FREE_DAILY_ATTEMPTS
     current_attempts = _daily_attempts.get(rate_key, 0)
@@ -126,7 +138,7 @@ async def learn(
     # Increment attempt counter
     _daily_attempts[rate_key] = current_attempts + 1
 
-    # 3. Create job and run training in background thread
+    # 4. Create job and run training in background thread
     job_id = uuid.uuid4().hex[:8]
     _store_job(job_id, {"status": "training", "result": None, "error": None})
 

@@ -62,7 +62,11 @@ python scripts/postprocess_everydb2.py
 - `RaceDate` カラムの合成（時系列ソート用）
 - 血統情報の結合（N_UMA → N_UMA_RACE）
 - インデックス作成
-- `feature_table_cache.csv` の生成
+- `feature_table_cache.parquet` の生成（5年出力 + 履歴バッファ5年ロード）
+
+> **本番デプロイ時の注意**: `backend/data/feature_table_cache.parquet` は **git commit 必須**。
+> 本番 (Render) は DB を持たないため、キャッシュが無いと POST /learn が 503 を返す。
+> `.gitignore` でホワイトリスト済み (`!data/feature_table_cache.parquet`)。
 
 ## 7. 動作確認
 
@@ -85,6 +89,53 @@ python main.py
    ```bash
    python scripts/postprocess_everydb2.py
    ```
+
+## 9. 未来予測 (Pro限定) を有効にする運用
+
+未来予測機能は `N_RACE` / `N_UMA_RACE` に **今週分の未開催レース (出馬表)** が入っていることを前提にしています。JRA-VAN の「**今週データ種別 B**」(JVOpen=2) を毎週取り込んでください。
+
+### 毎週の運用フロー (目安)
+
+| 曜日 / 時刻 | 操作 | 内容 |
+|---|---|---|
+| 木 20:00 以降 | EveryDB2「更新処理」 | 出走馬名表時点のレース情報が届く |
+| 金 午前中まで | EveryDB2 を再実行 | 出馬表 (枠番確定) が届く |
+| 金〜土 | `bash scripts/weekly_etl.sh` | RaceKey / RaceDate / 調教集約 を付与 (Git Bash / WSL 前提) |
+| 土 15:00 以降 | EveryDB2 再実行 | レース確定 → `KakuteiJyuni` が埋まり未来予測対象から自動除外 |
+
+### 更新データ種別の設定
+
+「更新設定(D)」で以下もチェック:
+
+| データ種別 | JVOpen | 用途 |
+|---|---|---|
+| **B.今週データ** | 2 | 今週土日分の N_RACE / N_UMA_RACE (出馬表) |
+| **RCVN** (レース情報補てん) | — | 出走予定馬の過去走マスタを補充 |
+
+※ 「A.通常データ」(=1) のみだと確定済みレースしか入ってこず、未来予測は動きません。
+
+### 動作モード切替
+
+`FUTURE_PREDICTION_MODE` 環境変数で挙動を変えられます:
+
+| 値 | 挙動 |
+|---|---|
+| `real` (既定) | `N_RACE` から今週の未確定レースを引いて推論。無ければ `[]` を返し warning ログ |
+| `demo` | 合成データで推論。テスト・開発用 |
+| `auto` | 実データがあれば `real`、無ければ `demo` にフォールバック |
+
+### 確認コマンド
+
+```bash
+cd backend
+# 今週の未確定レース件数
+sqlite3 data/jravan.db "SELECT COUNT(*) FROM N_RACE WHERE RaceDate >= date('now') AND RaceDate <= date('now', '+7 days')"
+
+# 特徴量カバレッジのログを詳細に出す
+FUTURE_PREDICTION_DEBUG=1 python -c \
+  "from services.future_prediction import generate_future_predictions; \
+   print(generate_future_predictions('<model.pkl>', [], 'data/jravan.db')['meta'])"
+```
 
 ## トラブルシューティング
 
