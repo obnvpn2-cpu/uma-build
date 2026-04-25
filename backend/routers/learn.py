@@ -3,12 +3,15 @@
 Provides the POST /api/learn endpoint for triggering model training.
 Uses an async job pattern: POST returns immediately with a job_id,
 and clients poll GET /api/learn/status/{job_id} for results.
+
+Job state and per-day rate limits are persisted in Supabase
+(see backend/services/job_store.py and backend/services/rate_limit.py)
+so that Cloud Run scale-out instances share a single source of truth.
 """
 
 import logging
 import threading
 import uuid
-from collections import OrderedDict
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -16,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from middleware.auth import AuthUser, get_optional_user
 from ml.quick_train import cache_is_available
+from services import job_store, rate_limit
 from services.feature_catalog import get_all_feature_ids
 from services.trainer import run_training
 
@@ -23,23 +27,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["learn"])
 
-# Simple in-memory rate limiting (per-session, per-day)
-_daily_attempts: Dict[str, int] = {}
 MAX_FREE_DAILY_ATTEMPTS = 5
 MAX_PRO_DAILY_ATTEMPTS = 50
-
-# In-memory job store with size limit to prevent memory leaks
-_MAX_JOBS = 50
-_jobs: OrderedDict[str, Dict[str, Any]] = OrderedDict()
-_jobs_lock = threading.Lock()
-
-
-def _store_job(job_id: str, data: Dict[str, Any]) -> None:
-    """Store a job, evicting oldest entries if over the limit."""
-    with _jobs_lock:
-        _jobs[job_id] = data
-        while len(_jobs) > _MAX_JOBS:
-            _jobs.popitem(last=False)
 
 
 class LearnRequest(BaseModel):
@@ -74,6 +63,12 @@ class LearnResponse(BaseModel):
     locked_features: Optional[List[Dict[str, Any]]] = None
     train_metrics: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+
+
+def _resolve_rate_key(user: Optional[AuthUser], session_id: Optional[str]) -> str:
+    if user:
+        return f"user:{user.user_id}"
+    return f"session:{session_id or 'anonymous'}"
 
 
 @router.post("/learn", status_code=202)
@@ -123,29 +118,31 @@ async def learn(
             detail="特徴量キャッシュが未生成です。管理者にお問い合わせください。",
         )
 
-    # 3. Check daily attempt limit
-    rate_key = user.user_id if user else (request.session_id or "anonymous")
+    # 3. Atomic check + increment of daily attempt counter (UTC day).
+    rate_key = _resolve_rate_key(user, request.session_id)
     max_attempts = MAX_PRO_DAILY_ATTEMPTS if is_pro else MAX_FREE_DAILY_ATTEMPTS
-    current_attempts = _daily_attempts.get(rate_key, 0)
-
-    if current_attempts >= max_attempts:
+    allowed, current = rate_limit.check_and_increment(rate_key, max_attempts)
+    if not allowed:
         raise HTTPException(
             status_code=429,
             detail=f"本日の学習回数の上限（{max_attempts}回）に達しました。"
             + ("" if is_pro else " Proプランにアップグレードすると上限が緩和されます。"),
         )
 
-    # Increment attempt counter
-    _daily_attempts[rate_key] = current_attempts + 1
-
     # 4. Create job and run training in background thread
-    job_id = uuid.uuid4().hex[:8]
-    _store_job(job_id, {"status": "training", "result": None, "error": None})
-
+    job_id = uuid.uuid4().hex
     user_id = user.user_id if user else None
+    session_id = request.session_id if not user else None
+    job_store.put(
+        job_id,
+        {"status": "running", "result": None, "error": None},
+        user_id=user_id,
+        session_id=session_id,
+    )
+
     thread = threading.Thread(
         target=_run_job,
-        args=(job_id, valid_features, is_pro, user_id),
+        args=(job_id, valid_features, is_pro, user_id, session_id),
         daemon=True,
     )
     thread.start()
@@ -153,24 +150,58 @@ async def learn(
     return {"job_id": job_id, "status": "training"}
 
 
-def _run_job(job_id: str, features: list, is_pro: bool = False, user_id: str | None = None) -> None:
+def _run_job(
+    job_id: str,
+    features: list,
+    is_pro: bool = False,
+    user_id: str | None = None,
+    session_id: str | None = None,
+) -> None:
     """Execute training in a background thread and update job status."""
     try:
         results = run_training(selected_feature_ids=features, is_pro=is_pro, user_id=user_id)
         if results.get("error"):
-            _store_job(job_id, {"status": "failed", "result": None, "error": results["error"]})
+            job_store.put(
+                job_id,
+                {"status": "failed", "result": None, "error": results["error"]},
+                user_id=user_id,
+                session_id=session_id,
+            )
         else:
-            _store_job(job_id, {"status": "completed", "result": results, "error": None})
+            job_store.put(
+                job_id,
+                {"status": "completed", "result": results, "error": None},
+                user_id=user_id,
+                session_id=session_id,
+            )
     except Exception as e:
         logger.exception("Training job %s failed: %s", job_id, str(e))
-        _store_job(job_id, {"status": "failed", "result": None, "error": str(e)})
+        job_store.put(
+            job_id,
+            {"status": "failed", "result": None, "error": str(e)},
+            user_id=user_id,
+            session_id=session_id,
+        )
 
 
 @router.get("/learn/status/{job_id}")
-def job_status(job_id: str) -> Dict[str, Any]:
-    """Poll the status of a training job."""
-    with _jobs_lock:
-        job = _jobs.get(job_id)
+def job_status(
+    job_id: str,
+    session_id: Optional[str] = None,
+    user: Optional[AuthUser] = Depends(get_optional_user),
+) -> Dict[str, Any]:
+    """Poll the status of a training job.
+
+    Authorization: the requester must own the job (matching user_id
+    for authenticated users, or matching session_id for anonymous).
+    """
+    requester_user_id = user.user_id if user else None
+    requester_session_id = session_id if not user else None
+    job = job_store.get(
+        job_id,
+        requester_user_id=requester_user_id,
+        requester_session_id=requester_session_id,
+    )
     if not job:
         raise HTTPException(status_code=404, detail="ジョブが見つかりません")
     return {"job_id": job_id, **job}
@@ -190,9 +221,9 @@ async def get_limits(
         Dict with max_attempts, used_attempts, remaining_attempts.
     """
     is_pro = user.is_pro if user else False
-    rate_key = user.user_id if user else session_id
+    rate_key = _resolve_rate_key(user, session_id)
     max_attempts = MAX_PRO_DAILY_ATTEMPTS if is_pro else MAX_FREE_DAILY_ATTEMPTS
-    used = _daily_attempts.get(rate_key, 0)
+    used = rate_limit.get_count(rate_key)
 
     return {
         "max_attempts": max_attempts,

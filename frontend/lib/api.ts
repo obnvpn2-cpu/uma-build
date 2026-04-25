@@ -112,9 +112,15 @@ export async function postLearn(request: LearnRequest): Promise<{ job_id: string
   });
 }
 
-export async function pollJobStatus(jobId: string): Promise<JobStatusResponse> {
+export async function pollJobStatus(
+  jobId: string,
+  sessionId?: string,
+): Promise<JobStatusResponse> {
+  const query = sessionId
+    ? `?session_id=${encodeURIComponent(sessionId)}`
+    : "";
   return fetchAPI<JobStatusResponse>(
-    `/api/learn/status/${encodeURIComponent(jobId)}`
+    `/api/learn/status/${encodeURIComponent(jobId)}${query}`
   );
 }
 

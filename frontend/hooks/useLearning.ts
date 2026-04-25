@@ -33,7 +33,7 @@ export function useLearning() {
         // Poll for results
         for (let i = 0; i < MAX_POLL_ATTEMPTS; i++) {
           await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-          const status = await pollJobStatus(job_id);
+          const status = await pollJobStatus(job_id, sessionId);
 
           if (status.status === "completed") {
             const response = status.result!;

@@ -12,6 +12,15 @@ from routers import features, learn, models, results, stripe
 
 logger = logging.getLogger(__name__)
 
+# Hard-fail in production if the Supabase service-role key is missing,
+# so a misconfigured deploy can't silently fall back to in-memory job
+# state (which would lose jobs across Cloud Run instances).
+if os.environ.get("ENV") == "production" and not os.environ.get("SUPABASE_SERVICE_ROLE_KEY"):
+    raise RuntimeError(
+        "SUPABASE_SERVICE_ROLE_KEY is required in production "
+        "(job_store / rate_limit cannot use in-memory fallback at scale)."
+    )
+
 # Sentry error tracking (Free: 5k events/month)
 SENTRY_DSN = os.environ.get("SENTRY_DSN", "")
 if SENTRY_DSN:
