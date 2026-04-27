@@ -1,0 +1,44 @@
+# Files we explicitly do NOT want in the image.
+# Note: data/feature_table_cache.parquet IS required at runtime, so it
+# is intentionally NOT excluded here.
+
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+.venv/
+venv/
+
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+
+.env
+.env.*
+!.env.example
+
+tests/
+trained_models/*.pkl
+trained_models/*.json
+
+# Heavy raw DB — not needed at runtime (only cache is)
+data/jravan.db
+data/jravan.db-*
+data/results/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+bash.exe.stackdump
+
+# Documentation that doesn't need to ship in the image
+document/
+scripts/
+supabase/
+
+# Git metadata
+.git/
+.gitignore

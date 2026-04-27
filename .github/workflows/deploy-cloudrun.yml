@@ -1,0 +1,58 @@
+name: Deploy backend to Cloud Run
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/deploy-cloudrun.yml'
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: asia-northeast1
+  SERVICE: uma-build-api
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # Workload Identity Federation
+    steps:
+      - uses: actions/checkout@v4
+
+      # Workload Identity Federation (no JSON key needed once set up).
+      # Set GCP_WORKLOAD_IDENTITY_PROVIDER and GCP_SERVICE_ACCOUNT in
+      # GitHub Secrets per https://github.com/google-github-actions/auth#setup
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --source backend \
+            --region "$REGION" \
+            --project "$PROJECT_ID" \
+            --memory 4Gi \
+            --cpu 2 \
+            --timeout 600 \
+            --concurrency 1 \
+            --max-instances 5 \
+            --min-instances 0 \
+            --no-cpu-throttling \
+            --allow-unauthenticated \
+            --set-env-vars "ENV=production,FUTURE_PREDICTION_MODE=real,ALLOWED_ORIGINS=${{ secrets.ALLOWED_ORIGINS }},SUPABASE_URL=${{ secrets.SUPABASE_URL }}" \
+            --set-secrets "SUPABASE_JWT_SECRET=SUPABASE_JWT_SECRET:latest,SUPABASE_SERVICE_ROLE_KEY=SUPABASE_SERVICE_ROLE_KEY:latest,STRIPE_SECRET_KEY=STRIPE_SECRET_KEY:latest,STRIPE_WEBHOOK_SECRET=STRIPE_WEBHOOK_SECRET:latest,STRIPE_PRICE_MONTHLY=STRIPE_PRICE_MONTHLY:latest,STRIPE_PRICE_YEARLY=STRIPE_PRICE_YEARLY:latest"
+
+      - name: Smoke test
+        run: |
+          URL=$(gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT_ID" --format='value(status.url)')
+          echo "Service URL: $URL"
+          curl -fsSL "$URL/api/health" | tee /dev/stderr | grep -q '"status":"ok"'
