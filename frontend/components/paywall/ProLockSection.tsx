@@ -4,9 +4,43 @@ import Link from "next/link";
 
 interface ProLockSectionProps {
   title: string;
+  // When the viewer is already Pro (or first-unlock) but the section has no
+  // data, show a "no data" message instead of an upsell CTA.
+  isProUser?: boolean;
 }
 
-export function ProLockSection({ title }: ProLockSectionProps) {
+export function ProLockSection({ title, isProUser = false }: ProLockSectionProps) {
+  if (isProUser) {
+    return (
+      <div className="glass p-4 space-y-3">
+        <h3 className="text-sm font-semibold">{title}</h3>
+        <div className="flex flex-col items-center justify-center py-8 space-y-2 text-center">
+          <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center">
+            <svg
+              className="w-6 h-6 text-text-muted"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </svg>
+          </div>
+          <p className="text-sm text-text-secondary">
+            この学習設定ではデータが得られませんでした
+          </p>
+          <p className="text-xs text-text-muted">
+            特徴量を変更して再度お試しください
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="glass p-4 space-y-3">
       <div className="flex items-center justify-between">

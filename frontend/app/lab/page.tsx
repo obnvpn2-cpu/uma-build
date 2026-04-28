@@ -354,7 +354,7 @@ export default function LabPage() {
                   isBlurred={!showFullResults}
                 />
               ) : (
-                <ProLockSection title="年別ROI推移" />
+                <ProLockSection title="年別ROI推移" isProUser={showFullResults} />
               )}
 
               {/* Feature importance: show if data exists (preview for Free, full for Pro) */}
@@ -366,7 +366,7 @@ export default function LabPage() {
                   categories={categories}
                 />
               ) : (
-                <ProLockSection title="特徴量重要度 Top10" />
+                <ProLockSection title="特徴量重要度 Top10" isProUser={showFullResults} />
               )}
             </div>
 
@@ -378,7 +378,7 @@ export default function LabPage() {
                 isBlurred={!showFullResults}
               />
             ) : (
-              <ProLockSection title="馬場条件別パフォーマンス" />
+              <ProLockSection title="馬場条件別パフォーマンス" isProUser={showFullResults} />
             )}
 
             {/* Future prediction: show if available, otherwise lock section */}
@@ -386,7 +386,7 @@ export default function LabPage() {
             results.future_prediction.length > 0 ? (
               <FuturePredictionCard races={results.future_prediction} />
             ) : (
-              <ProLockSection title="未来レース予測" />
+              <ProLockSection title="未来レース予測" isProUser={showFullResults} />
             )}
 
             {/* Distance breakdown: show if data exists, otherwise lock */}
@@ -451,7 +451,7 @@ export default function LabPage() {
                 </div>
               </div>
             ) : (
-              <ProLockSection title="距離別パフォーマンス" />
+              <ProLockSection title="距離別パフォーマンス" isProUser={showFullResults} />
             )}
 
             {/* Locked features */}
