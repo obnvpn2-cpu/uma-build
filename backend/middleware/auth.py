@@ -15,6 +15,7 @@ from urllib.parse import quote
 import httpx
 import jwt
 from fastapi import HTTPException, Request
+from jwt import PyJWKClient
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,14 @@ logger = logging.getLogger(__name__)
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+
+# JWKS client for asymmetric (ES256/RS256) JWT verification.
+# Supabase issues new tokens with ES256 by default; legacy projects use HS256.
+_JWKS_CLIENT: Optional[PyJWKClient] = (
+    PyJWKClient(f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json", cache_keys=True, lifespan=3600)
+    if SUPABASE_URL
+    else None
+)
 
 # UUID pattern for user_id validation
 _UUID_RE = re.compile(
@@ -43,23 +52,49 @@ class AuthUser:
 
 
 def _decode_jwt(token: str) -> Optional[dict]:
-    """Decode and verify a Supabase JWT token."""
-    if not SUPABASE_JWT_SECRET:
-        logger.debug("SUPABASE_JWT_SECRET not set, skipping JWT verification")
-        return None
+    """Decode and verify a Supabase JWT token.
+
+    Supports both legacy HS256 (symmetric, JWT_SECRET) and current ES256/RS256
+    (asymmetric, JWKS-fetched). Algorithm is selected from the token header.
+    """
     try:
-        payload = jwt.decode(
+        header = jwt.get_unverified_header(token)
+    except jwt.InvalidTokenError as e:
+        logger.warning("Invalid JWT token header: %s", e)
+        return None
+
+    alg = header.get("alg", "HS256")
+
+    try:
+        if alg == "HS256":
+            if not SUPABASE_JWT_SECRET:
+                logger.debug("HS256 token but SUPABASE_JWT_SECRET not set")
+                return None
+            return jwt.decode(
+                token,
+                SUPABASE_JWT_SECRET,
+                algorithms=["HS256"],
+                audience="authenticated",
+            )
+
+        if _JWKS_CLIENT is None:
+            logger.warning("Asymmetric JWT (%s) but JWKS client not initialized", alg)
+            return None
+        signing_key = _JWKS_CLIENT.get_signing_key_from_jwt(token).key
+        return jwt.decode(
             token,
-            SUPABASE_JWT_SECRET,
-            algorithms=["HS256"],
+            signing_key,
+            algorithms=[alg],
             audience="authenticated",
         )
-        return payload
     except jwt.ExpiredSignatureError:
         logger.warning("JWT token expired")
         return None
     except jwt.InvalidTokenError as e:
         logger.warning("Invalid JWT token: %s", e)
+        return None
+    except Exception as e:
+        logger.warning("JWT verification error (%s): %s", alg, e)
         return None
 
 
