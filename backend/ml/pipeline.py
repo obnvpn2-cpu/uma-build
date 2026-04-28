@@ -97,6 +97,10 @@ class LGBMPipeline:
         self.config = config or TrainConfig()
         self.model: Optional[lgb.Booster] = None
         self.feature_names: List[str] = []
+        # Categorical columns the model was trained with. Saved/loaded so
+        # that predict() can re-cast inference data to the same dtype.
+        # LightGBM otherwise raises "categorical_feature do not match".
+        self.categorical_features: List[str] = []
         self.model_id: str = ""
         self.train_metrics: Dict[str, Any] = {}
 
@@ -137,6 +141,7 @@ class LGBMPipeline:
         for col in categorical_cols:
             X_train[col] = X_train[col].astype("category")
             X_val[col] = X_val[col].astype("category")
+        self.categorical_features = list(categorical_cols)
 
         train_data = lgb.Dataset(
             X_train, label=y_train,
@@ -224,12 +229,22 @@ class LGBMPipeline:
             for col in missing:
                 X[col] = np.nan
 
-        X_aligned = X[self.feature_names]
+        X_aligned = X[self.feature_names].copy()
 
-        # Handle categorical columns
-        categorical_cols = X_aligned.select_dtypes(include=["category", "object"]).columns.tolist()
-        for col in categorical_cols:
-            X_aligned[col] = X_aligned[col].astype("category")
+        # Cast columns the model was trained on as categorical to "category"
+        # dtype so LightGBM accepts the same column shape as at train time.
+        # Falls back to dtype-detection on legacy pickles that didn't save
+        # categorical_features.
+        if self.categorical_features:
+            for col in self.categorical_features:
+                if col in X_aligned.columns:
+                    X_aligned[col] = X_aligned[col].astype("category")
+        else:
+            legacy_cats = X_aligned.select_dtypes(
+                include=["category", "object"]
+            ).columns.tolist()
+            for col in legacy_cats:
+                X_aligned[col] = X_aligned[col].astype("category")
 
         preds = self.model.predict(X_aligned, num_iteration=self.model.best_iteration)
         return preds
@@ -272,6 +287,7 @@ class LGBMPipeline:
         save_data = {
             "model": self.model,
             "feature_names": self.feature_names,
+            "categorical_features": self.categorical_features,
             "config": asdict(self.config),
             "train_metrics": self.train_metrics,
             "model_id": self.model_id,
@@ -300,6 +316,7 @@ class LGBMPipeline:
         pipeline = cls(config=config)
         pipeline.model = data["model"]
         pipeline.feature_names = data["feature_names"]
+        pipeline.categorical_features = data.get("categorical_features", [])
         pipeline.train_metrics = data["train_metrics"]
         pipeline.model_id = data["model_id"]
 

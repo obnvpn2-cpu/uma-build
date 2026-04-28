@@ -23,6 +23,27 @@ from ml.pipeline import LGBMPipeline, TrainConfig, finish_to_relevance
 logger = logging.getLogger(__name__)
 
 
+def _track_cd_to_surface_int(track_cd: Any) -> int:
+    """Map JRA-VAN TrackCD ('10'-'59') to surface int (1=芝, 2=ダート, 3=障害).
+
+    Mirrors backend/services/future_prediction.py mapping; backtest expects
+    int surface but feature_table_cache stores raw TrackCD as `track_type`.
+    """
+    if track_cd is None:
+        return 0
+    try:
+        code = int(str(track_cd).strip())
+    except (TypeError, ValueError):
+        return 0
+    if 10 <= code <= 22:
+        return 1
+    if 23 <= code <= 29:
+        return 2
+    if 51 <= code <= 59:
+        return 3
+    return 0
+
+
 def _compute_fold_boundaries(
     race_keys: np.ndarray,
     n_folds: int = 3,
@@ -150,6 +171,21 @@ def walk_forward_cv(
                        "distance", "tansho_payout"]:
             if extra in val_df.columns:
                 pred_df[extra] = val_df[extra].values
+
+        # backtest expects integer `surface` (1=芝, 2=ダート). The feature
+        # cache only carries raw JRA-VAN TrackCD as `track_type`, so derive
+        # surface here when missing.
+        if "surface" not in pred_df.columns and "track_type" in val_df.columns:
+            pred_df["surface"] = (
+                val_df["track_type"].apply(_track_cd_to_surface_int).values
+            )
+
+        # Coerce track_condition to int for downstream groupby / labels.
+        if "track_condition" in pred_df.columns:
+            pred_df["track_condition"] = pd.to_numeric(
+                pred_df["track_condition"], errors="coerce"
+            ).fillna(0).astype(int)
+
         pred_df["pred_prob"] = val_preds
         pred_df["actual_win"] = (val_df["finish_order"] == 1).astype(int).values
         pred_df["cv_fold"] = fold_i
