@@ -19,7 +19,6 @@ import { ProLockSection } from "@/components/paywall/ProLockSection";
 import { FirstUnlockBanner } from "@/components/paywall/FirstUnlockBanner";
 import { FuturePredictionCard } from "@/components/results/FuturePredictionCard";
 import { SaveModelButton } from "@/components/models/SaveModelButton";
-import { DemoNoticeBanner } from "@/components/ui/DemoNoticeBanner";
 import { Toast } from "@/components/ui/Toast";
 import { ColdStartLoader } from "@/components/ui/ColdStartLoader";
 import { useFeatureSelection } from "@/hooks/useFeatureSelection";
@@ -340,9 +339,6 @@ export default function LabPage() {
           >
             {/* First unlock banner */}
             {isFirstUnlock && <FirstUnlockBanner />}
-
-            {/* DEMO notice banner */}
-            <DemoNoticeBanner />
 
             {/* Summary */}
             {results.summary && <BacktestSummary summary={results.summary} />}
