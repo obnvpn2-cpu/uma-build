@@ -24,7 +24,7 @@ import { Toast } from "@/components/ui/Toast";
 import { ColdStartLoader } from "@/components/ui/ColdStartLoader";
 import { useFeatureSelection } from "@/hooks/useFeatureSelection";
 import { useLearning } from "@/hooks/useLearning";
-import { useAttempts } from "@/hooks/useAttempts";
+import { useUserLimits } from "@/hooks/useUserLimits";
 import { sendEvent } from "@/lib/gtm";
 
 /** Reads ?upgraded=true from URL and shows a toast, then strips the param */
@@ -51,8 +51,9 @@ export default function LabPage() {
     setToast({ message: "Proプランへのアップグレードが完了しました！", type: "success" });
   }, []);
 
-  // Pro status comes from results (server-determined)
-  const isPro = false; // Overridden per-result by results.is_pro from backend
+  // Authoritative subscription state from backend (/api/learn/limits).
+  // Used for the Step 2 plan badge + remaining-attempt count.
+  const { isPro, used, max, remaining, refresh } = useUserLimits();
 
   const {
     categories,
@@ -66,7 +67,6 @@ export default function LabPage() {
   } = useFeatureSelection();
 
   const { isLoading: learningLoading, results, error, startLearning } = useLearning();
-  const { used, max, remaining, refresh } = useAttempts(isPro);
 
   // Track actual Pro status from backend results
   const resultIsPro = results?.is_pro ?? false;
@@ -255,7 +255,9 @@ export default function LabPage() {
                 </div>
                 <div>
                   <p className="text-text-muted text-xs">プラン</p>
-                  <p className="text-text-primary text-lg">Free</p>
+                  <p className={`text-lg ${isPro ? "text-accent" : "text-text-primary"}`}>
+                    {isPro ? "Pro" : "Free"}
+                  </p>
                 </div>
               </div>
               <button
