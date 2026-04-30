@@ -26,5 +26,9 @@ python scripts/postprocess_everydb2.py --db "$DB" --build-cache \
   --cache-output-years 5 --cache-history-buffer-years 5
 
 echo ""
-echo "ETL complete: feature_table_cache updated"
-echo "Next: deploy to Render (git push or manual deploy)"
+echo "--- Extracting upcoming races (Cloud Run ships this parquet) ---"
+DB_PATH="$DB" python scripts/extract_upcoming.py
+
+echo ""
+echo "ETL complete: feature_table_cache + upcoming_races updated"
+echo "Next: git add data/feature_table_cache.parquet data/upcoming_races.parquet && git commit && deploy"

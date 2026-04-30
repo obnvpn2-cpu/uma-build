@@ -26,3 +26,4 @@ trained_models/*.json
 # Keep cache files for deployment
 !data/feature_table_cache.csv
 !data/feature_table_cache.parquet
+!data/upcoming_races.parquet
