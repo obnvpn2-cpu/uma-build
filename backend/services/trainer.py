@@ -138,14 +138,17 @@ def run_training(
 
     # Generate future race predictions
     try:
-        future_preds = generate_future_predictions(
+        fp_result = generate_future_predictions(
             model_path=train_result["model_path"],
             selected_features=selected_feature_ids,
             db_path=db_path,
         )
+        future_preds = fp_result.get("predictions", [])
+        future_pred_meta = fp_result.get("meta", {"status": "unavailable"})
     except Exception as e:
         logger.warning("Future prediction failed: %s", e)
         future_preds = []
+        future_pred_meta = {"status": "unavailable", "error": str(e)}
 
     # Combine results
     elapsed = time.time() - start_time
@@ -158,6 +161,7 @@ def run_training(
         "distance_breakdown": backtest_result.get("distance_breakdown", []),
         "calibration": backtest_result.get("calibration", []),
         "future_prediction": future_preds,
+        "future_prediction_meta": future_pred_meta,
         "train_metrics": train_result.get("train_metrics", {}),
         "cv_metrics": train_result.get("cv_metrics", {}),
         "meta": {

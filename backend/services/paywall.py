@@ -66,6 +66,9 @@ def mask_results(
             "locked_features": [],
         }
 
+    # Free tier: future_prediction_meta must also be hidden
+    # (it can reveal upcoming race metadata / ingestion status).
+
     # Free tier masking
     logger.info("Applying free-tier paywall masking (with preview)")
 
@@ -116,6 +119,7 @@ def mask_results(
         "distance_breakdown": None,
         "calibration": None,
         "future_prediction": None,
+        "future_prediction_meta": None,
         "meta": {
             "n_features": meta.get("n_features"),
             "data_years": data_years,

@@ -85,6 +85,15 @@ export interface FuturePredictionRace {
   entries: FuturePredictionEntry[];
 }
 
+export interface FuturePredictionMeta {
+  status: "ok" | "no_upcoming" | "demo" | "unavailable";
+  upcoming_count?: number;
+  latest_race_date?: string;
+  reason?: string;
+  error?: string;
+  fell_back_from?: string;
+}
+
 export interface LearnResponse {
   model_id: string | null;
   is_pro: boolean;
@@ -96,6 +105,7 @@ export interface LearnResponse {
   distance_breakdown: BreakdownItem[] | null;
   calibration: CalibrationItem[] | null;
   future_prediction: FuturePredictionRace[] | null;
+  future_prediction_meta?: FuturePredictionMeta | null;
   meta: Record<string, unknown> | null;
   locked_features: LockedFeature[] | null;
   train_metrics?: Record<string, unknown> | null;
