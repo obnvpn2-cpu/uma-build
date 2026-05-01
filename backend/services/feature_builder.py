@@ -290,11 +290,21 @@ def _load_uma_race_table(
     return None
 
 
-def _compute_as_of_features(df: pd.DataFrame, col: Dict[str, Optional[str]]) -> pd.DataFrame:
+def _compute_as_of_features(
+    df: pd.DataFrame,
+    col: Dict[str, Optional[str]],
+    _use_legacy: bool = False,
+) -> pd.DataFrame:
     """Compute as-of (point-in-time) features for each row.
 
     All statistics are calculated using only races BEFORE the current
     race_date, never including the current race.
+
+    Args:
+        df: Input feature table.
+        col: Canonical column mapping (see COLUMN_CANDIDATES).
+        _use_legacy: If True, dispatch to the slow O(N²) per-row reference
+            implementation. Test-only, used by equivalence tests.
     """
     # Ensure required columns exist
     c_race_key = col.get("race_key")
@@ -401,7 +411,10 @@ def _compute_as_of_features(df: pd.DataFrame, col: Dict[str, Optional[str]]) -> 
     # Convert race_date to datetime for chronological filtering
     df["_race_date_dt"] = pd.to_datetime(df[c_race_date], errors="coerce")
 
-    _compute_horse_stats_legacy(df, col)
+    if _use_legacy:
+        _compute_horse_stats_legacy(df, col)
+    else:
+        _compute_horse_stats_vectorized(df, col)
 
     # -----------------------------------------------------------------------
     # Jockey as-of stats (computed per jockey across all horses)
@@ -431,19 +444,22 @@ def _compute_as_of_features(df: pd.DataFrame, col: Dict[str, Optional[str]]) -> 
             c_place=c_place,
         )
 
-    if c_grade:
-        _compute_class_change_legacy(df, col)
-
-    if "horse_total_prize" in df.columns and c_race_key:
-        logger.info("Computing prize rank within field...")
-        for race_id, race_df in df.groupby(c_race_key):
-            prizes = race_df["horse_total_prize"].dropna()
-            if len(prizes) > 0:
-                ranks = prizes.rank(ascending=False, method="min")
-                df.loc[ranks.index, "horse_prize_rank_in_field"] = ranks
-
-    if "_last3f" in df.columns and c_race_key:
-        _compute_last3f_rank_legacy(df, col)
+    if _use_legacy:
+        if c_grade:
+            _compute_class_change_legacy(df, col)
+        if "horse_total_prize" in df.columns and c_race_key:
+            logger.info("Computing prize rank within field...")
+            for race_id, race_df in df.groupby(c_race_key):
+                prizes = race_df["horse_total_prize"].dropna()
+                if len(prizes) > 0:
+                    ranks = prizes.rank(ascending=False, method="min")
+                    df.loc[ranks.index, "horse_prize_rank_in_field"] = ranks
+        if "_last3f" in df.columns and c_race_key:
+            _compute_last3f_rank_legacy(df, col)
+    else:
+        _compute_class_change_vectorized(df, col)
+        _compute_prize_rank_vectorized(df, col)
+        _compute_last3f_rank_vectorized(df, col)
 
     # Clean up temporary columns
     temp_cols = [c for c in df.columns if c.startswith("_")]
@@ -644,6 +660,260 @@ def _compute_last3f_rank_legacy(df: pd.DataFrame, col: Dict[str, Optional[str]])
                 past_ranks = past["_last3f_rank"].dropna()
                 if len(past_ranks) > 0:
                     df.at[i, "horse_last3f_rank_avg"] = past_ranks.mean()
+
+
+# ---------------------------------------------------------------------------
+# Vectorised path
+# ---------------------------------------------------------------------------
+
+
+def _compute_horse_stats_vectorized(df: pd.DataFrame, col: Dict[str, Optional[str]]) -> None:
+    """Vectorised in-place horse-block as-of features.
+
+    Replaces the per-horse / per-row loop with groupby + cumsum + shift +
+    rolling operations. Targets bit-equivalent output (within float
+    tolerances) to `_compute_horse_stats_legacy`.
+
+    Categories:
+      A. Basic cumulative (n_starts, n_wins, win_rate, in3_rate, avg_finish, last_finish)
+      B. Conditional cumulative (dist/surface/course)
+      C. Rolling window (recent3/5)
+      D. Days since last
+      E. NaN-aware cumulative mean (corner3/4, last3f, prize, weight, position_change)
+      F. cummin (best_last3f, max_grade)
+      G. weight_trend_3 via closed-form `(y[2]-y[0])/2` on dropna'd weights
+      H. Graded races (n_starts, win_rate)
+    """
+    c_horse_key = col.get("horse_key")
+    c_distance = col.get("distance")
+    c_surface = col.get("track_type")
+    c_place = col.get("place")
+    c_body_weight = col.get("body_weight")
+    c_body_weight_diff = col.get("body_weight_diff")
+    c_field_size = col.get("field_size")
+    c_grade = col.get("grade")
+
+    g = df.groupby(c_horse_key, sort=False)
+    n_prior = g.cumcount()  # 0, 1, 2, ... within each horse — count of past races
+
+    # ---------- Cat A: basic cumulative ----------
+    is_win = df["_is_win"]
+    is_in3 = df["_is_in3"]
+    finish = df["_finish"]
+
+    cum_win_excl = g["_is_win"].cumsum() - is_win
+    cum_in3_excl = g["_is_in3"].cumsum() - is_in3
+
+    # Past-finish mean is NaN-aware (legacy: past["_finish"].mean() skips NaN)
+    finish_filled = finish.fillna(0.0)
+    finish_valid = finish.notna().astype(float)
+    cum_finish_excl = finish_filled.groupby(df[c_horse_key]).cumsum() - finish_filled
+    cum_finish_n_excl = finish_valid.groupby(df[c_horse_key]).cumsum() - finish_valid
+
+    df["horse_n_starts"] = n_prior.where(n_prior > 0).astype(float)
+    df["horse_n_wins"] = cum_win_excl.where(n_prior > 0).astype(float)
+    df["horse_win_rate"] = (cum_win_excl / n_prior).where(n_prior > 0)
+    df["horse_in3_rate"] = (cum_in3_excl / n_prior).where(n_prior > 0)
+    df["horse_avg_finish"] = (cum_finish_excl / cum_finish_n_excl).where(cum_finish_n_excl > 0)
+    df["horse_last_finish"] = g["_finish"].shift(1)
+
+    # ---------- Cat C: rolling window ----------
+    df["horse_recent3_avg"] = g["_finish"].transform(
+        lambda s: s.shift(1).rolling(3, min_periods=1).mean()
+    )
+    df["horse_recent5_avg"] = g["_finish"].transform(
+        lambda s: s.shift(1).rolling(5, min_periods=1).mean()
+    )
+    df["horse_recent3_win_rate"] = g["_is_win"].transform(
+        lambda s: s.shift(1).rolling(3, min_periods=1).mean()
+    )
+
+    # ---------- Cat D: days since last ----------
+    if "_race_date_dt" in df.columns:
+        prev_dt = g["_race_date_dt"].shift(1)
+        df["horse_days_since_last"] = (df["_race_date_dt"] - prev_dt).dt.days
+
+    # ---------- Cat B: conditional cumulative (dist/surface/course) ----------
+    def _conditional_past_rate(gcols, value_col, cond_col):
+        sub = df.groupby(gcols, sort=False, dropna=False)
+        cum = sub[value_col].cumsum() - df[value_col]
+        cnt = sub.cumcount()
+        rate = (cum / cnt).where(cnt > 0)
+        return rate.where(df[cond_col].notna())
+
+    if c_distance and "_dist_cat" in df.columns:
+        df["horse_dist_win_rate"] = _conditional_past_rate(
+            [c_horse_key, "_dist_cat"], "_is_win", "_dist_cat"
+        )
+        df["horse_dist_in3_rate"] = _conditional_past_rate(
+            [c_horse_key, "_dist_cat"], "_is_in3", "_dist_cat"
+        )
+    if c_surface:
+        df["horse_surface_win_rate"] = _conditional_past_rate(
+            [c_horse_key, c_surface], "_is_win", c_surface
+        )
+        df["horse_surface_in3_rate"] = _conditional_past_rate(
+            [c_horse_key, c_surface], "_is_in3", c_surface
+        )
+    if c_place:
+        df["horse_course_win_rate"] = _conditional_past_rate(
+            [c_horse_key, c_place], "_is_win", c_place
+        )
+
+    # ---------- Cat E helper: NaN-aware past-mean ----------
+    def _past_mean_naaware(value_col):
+        v0 = df[value_col].fillna(0.0)
+        valid = df[value_col].notna().astype(float)
+        cum_v = v0.groupby(df[c_horse_key]).cumsum() - v0
+        cum_n = valid.groupby(df[c_horse_key]).cumsum() - valid
+        return (cum_v / cum_n).where(cum_n > 0)
+
+    # ---------- Cat E: weight features ----------
+    if c_body_weight and "_body_weight" in df.columns:
+        df["horse_avg_weight"] = _past_mean_naaware("_body_weight")
+        # legacy: weight_dev_from_avg only set when both current_w notna AND past has data.
+        # NaN propagation in subtraction handles both guards (NaN - X = NaN, X - NaN = NaN).
+        df["weight_dev_from_avg"] = df["_body_weight"] - df["horse_avg_weight"]
+
+    if c_body_weight_diff and "_body_weight_diff" in df.columns:
+        # legacy: only set when (a) past is non-empty AND (b) bwd notna.
+        # `n_prior > 0` covers (a); abs() preserving NaN covers (b).
+        df["abs_weight_diff"] = df["_body_weight_diff"].abs().where(n_prior > 0)
+
+    # ---------- Cat E: corner / pace ----------
+    if "_corner3" in df.columns:
+        df["horse_avg_corner3"] = _past_mean_naaware("_corner3")
+    if "_corner4" in df.columns:
+        df["horse_avg_corner4"] = _past_mean_naaware("_corner4")
+        # running_style: only when past has BOTH corner4 data AND field_size data > 0
+        # legacy operand order: pct = past_c4.mean() / avg_fs (same as ours)
+        if c_field_size and "_field_size" in df.columns:
+            avg_fs = _past_mean_naaware("_field_size")
+            with np.errstate(invalid="ignore", divide="ignore"):
+                pct = (df["horse_avg_corner4"] / avg_fs).where(
+                    avg_fs.notna() & (avg_fs > 0)
+                )
+            df["horse_running_style"] = pct.apply(
+                lambda x: _classify_running_style(x) if pd.notna(x) else np.nan
+            )
+
+    # ---------- Cat E: last3f ----------
+    if "_last3f" in df.columns:
+        df["horse_avg_last3f"] = _past_mean_naaware("_last3f")
+        # best_last3f: cummin on past valid last3f
+        l3_inf = df["_last3f"].fillna(np.inf)
+        cm = l3_inf.groupby(df[c_horse_key]).cummin()
+        cm_shifted = cm.groupby(df[c_horse_key]).shift(1)
+        df["horse_best_last3f"] = cm_shifted.replace(np.inf, np.nan)
+        # recent3 last3f: shift(1).rolling(3).mean() on _last3f
+        df["horse_recent3_last3f"] = g["_last3f"].transform(
+            lambda s: s.shift(1).rolling(3, min_periods=1).mean()
+        )
+
+    # ---------- Cat E: position change ----------
+    if "_corner4" in df.columns:
+        # legacy: past[["_corner4", "_finish"]].dropna() means BOTH must be valid
+        c4 = df["_corner4"]
+        f = df["_finish"]
+        valid_pair = (c4.notna() & f.notna()).astype(float)
+        pos_change = (c4 - f).fillna(0.0)
+        cum_pc = pos_change.groupby(df[c_horse_key]).cumsum() - pos_change
+        cum_n_pair = valid_pair.groupby(df[c_horse_key]).cumsum() - valid_pair
+        df["horse_avg_position_change"] = (cum_pc / cum_n_pair).where(cum_n_pair > 0)
+
+    # ---------- Cat E: prize ----------
+    if "_prize" in df.columns:
+        prize_filled = df["_prize"].fillna(0.0)
+        prize_valid = df["_prize"].notna().astype(float)
+        cum_prize = prize_filled.groupby(df[c_horse_key]).cumsum() - prize_filled
+        cum_prize_n = prize_valid.groupby(df[c_horse_key]).cumsum() - prize_valid
+        df["horse_total_prize"] = cum_prize.where(cum_prize_n > 0)
+        df["horse_avg_prize"] = (cum_prize / cum_prize_n).where(cum_prize_n > 0)
+        # legacy: earnings_per_start = past_prize.sum() / n_starts
+        # n_starts = len(past) (NOT cum_prize_n). Only set when past_prize has any.
+        df["horse_earnings_per_start"] = (cum_prize / n_prior).where(
+            (cum_prize_n > 0) & (n_prior > 0)
+        )
+
+    # ---------- Cat F: graded races ----------
+    if c_grade and "_grade_num" in df.columns:
+        gn = df["_grade_num"]
+        gn_inf = gn.fillna(np.inf)
+        cm_g = gn_inf.groupby(df[c_horse_key]).cummin()
+        cm_g_shifted = cm_g.groupby(df[c_horse_key]).shift(1)
+        df["horse_max_grade"] = cm_g_shifted.replace(np.inf, np.nan)
+
+        # is_graded: past graded races count — IMPORTANT: legacy writes 0 (not NaN)
+        # for any row with past races where past graded count is 0. Preserve that.
+        is_graded = (gn <= 3).fillna(False).astype(float)
+        cum_n_graded = is_graded.groupby(df[c_horse_key]).cumsum() - is_graded
+        df["horse_grade_n_starts"] = cum_n_graded.where(n_prior > 0)
+
+        # Graded win rate: past graded wins / past graded starts
+        is_graded_win = (is_graded * is_win).fillna(0.0)
+        cum_w_graded = is_graded_win.groupby(df[c_horse_key]).cumsum() - is_graded_win
+        df["horse_grade_win_rate"] = (cum_w_graded / cum_n_graded).where(cum_n_graded > 0)
+
+    # ---------- Cat G: weight_trend_3 (closed-form on dropna'd weight series) ----------
+    if c_body_weight and "_body_weight" in df.columns:
+        # Legacy: at row i, past_weights = past["_body_weight"].dropna(); if len >= 3,
+        # take tail(3), polyfit on x=[0,1,2] → slope = (y[2]-y[0])/2.
+        # We compute using a small per-horse loop on horses with >= 3 valid weights.
+        # Efficient: groupby.indices gives positional indices in O(N) once.
+        all_slopes = np.full(len(df), np.nan)
+        weights_arr = df["_body_weight"].to_numpy()
+        for hk, pos_idx in g.indices.items():
+            horse_weights = weights_arr[pos_idx]
+            mask_valid = ~np.isnan(horse_weights)
+            if mask_valid.sum() < 3:
+                continue
+            valid_buf: list[float] = []
+            for k in range(len(horse_weights)):
+                if len(valid_buf) >= 3:
+                    all_slopes[pos_idx[k]] = (valid_buf[-1] - valid_buf[-3]) / 2.0
+                w = horse_weights[k]
+                if not np.isnan(w):
+                    valid_buf.append(w)
+        df["weight_trend_3"] = all_slopes
+
+
+def _compute_class_change_vectorized(df: pd.DataFrame, col: Dict[str, Optional[str]]) -> None:
+    """Vectorised class_change. Replaces the per-horse loop with a single shift."""
+    c_horse_key = col.get("horse_key")
+    c_grade = col.get("grade")
+    if not c_grade or "_grade_num" not in df.columns:
+        return
+    gn = df["_grade_num"]
+    prev_grade = gn.groupby(df[c_horse_key]).shift(1)
+    # legacy: only set when both prev and curr are notna. Subtract preserves NaN.
+    df["horse_class_change"] = prev_grade - gn
+
+
+def _compute_prize_rank_vectorized(df: pd.DataFrame, col: Dict[str, Optional[str]]) -> None:
+    """Per-race rank by horse_total_prize. Replaces the per-race loop."""
+    c_race_key = col.get("race_key")
+    if not c_race_key or "horse_total_prize" not in df.columns:
+        return
+    df["horse_prize_rank_in_field"] = df.groupby(c_race_key)["horse_total_prize"].rank(
+        ascending=False, method="min"
+    )
+
+
+def _compute_last3f_rank_vectorized(df: pd.DataFrame, col: Dict[str, Optional[str]]) -> None:
+    """Vectorised last3f rank within race + per-horse cumulative average."""
+    c_horse_key = col.get("horse_key")
+    c_race_key = col.get("race_key")
+    if not c_race_key or "_last3f" not in df.columns:
+        return
+    df["_last3f_rank"] = df.groupby(c_race_key)["_last3f"].rank(
+        ascending=True, method="min"
+    )
+    # Past mean of _last3f_rank, NaN-aware (rows without last3f in their race give NaN ranks)
+    rank0 = df["_last3f_rank"].fillna(0.0)
+    rank_valid = df["_last3f_rank"].notna().astype(float)
+    cum_r = rank0.groupby(df[c_horse_key]).cumsum() - rank0
+    cum_n = rank_valid.groupby(df[c_horse_key]).cumsum() - rank_valid
+    df["horse_last3f_rank_avg"] = (cum_r / cum_n).where(cum_n > 0)
 
 
 def _compute_agent_stats(

@@ -241,12 +241,26 @@ def _assert_outputs_equivalent(out_a: pd.DataFrame, out_b: pd.DataFrame) -> None
             )
 
 
-def test_legacy_vs_legacy_sanity(synth_df: pd.DataFrame) -> None:
+def test_vectorized_matches_legacy(synth_df: pd.DataFrame) -> None:
+    """Vectorised path must produce horse-block features equivalent to legacy.
+
+    All 35 horse_* features are compared with per-feature tolerances
+    (rtol=1e-7 default; loosened for prize sums, weight_trend_3 polyfit).
+    NaN positions must match exactly.
+    """
+    out_legacy = _compute_as_of_features(
+        synth_df.copy(), CANONICAL_COL.copy(), _use_legacy=True
+    )
+    out_vec = _compute_as_of_features(
+        synth_df.copy(), CANONICAL_COL.copy(), _use_legacy=False
+    )
+    _assert_outputs_equivalent(out_legacy, out_vec)
+
+
+def test_two_orchestrator_calls_are_idempotent(synth_df: pd.DataFrame) -> None:
     """Sanity: running the orchestrator twice on identical input must match.
 
-    Today the orchestrator delegates to the legacy helpers, so this is a
-    self-equivalence check. Once commit 2 wires up the vectorised path, the
-    same harness compares legacy vs vectorised.
+    Guards against accidental state leakage in the cached groupby objects.
     """
     out1 = _compute_as_of_features(synth_df.copy(), CANONICAL_COL.copy())
     out2 = _compute_as_of_features(synth_df.copy(), CANONICAL_COL.copy())
@@ -302,14 +316,34 @@ def test_grade_n_starts_zero_value_present(synth_df: pd.DataFrame) -> None:
 
 
 @pytest.mark.slow
-def test_legacy_baseline_under_60s(synth_df: pd.DataFrame) -> None:
-    """Establish a legacy baseline timing on synth so commit 2 has a benchmark.
+def test_vectorized_is_meaningfully_faster(synth_df: pd.DataFrame) -> None:
+    """The vectorised path must be at least 5x faster than legacy on synth.
 
-    On 1500 rows / 50 horses, legacy should finish in < 60s. If much slower,
-    something is wrong with the test environment or the synth has degenerate
-    growth.
+    The plan target is 30-80x in production; we use a generous 5x floor
+    here to avoid CI flakiness from environment variance. A real regression
+    (e.g., accidentally re-introducing per-row pandas ops) would still trip
+    this — the gap is currently >> 5x on every machine measured.
     """
-    t0 = time.perf_counter()
-    _compute_as_of_features(synth_df.copy(), CANONICAL_COL.copy())
-    elapsed = time.perf_counter() - t0
-    assert elapsed < 60.0, f"legacy took {elapsed:.1f}s on synth (>{60}s limit)"
+    # Warm-up — eliminates JIT / import cost from the timing
+    _compute_as_of_features(synth_df.copy(), CANONICAL_COL.copy(), _use_legacy=False)
+
+    legacy_times = []
+    vec_times = []
+    for _ in range(3):
+        t0 = time.perf_counter()
+        _compute_as_of_features(synth_df.copy(), CANONICAL_COL.copy(), _use_legacy=True)
+        legacy_times.append(time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
+        _compute_as_of_features(synth_df.copy(), CANONICAL_COL.copy(), _use_legacy=False)
+        vec_times.append(time.perf_counter() - t0)
+
+    legacy_med = sorted(legacy_times)[1]
+    vec_med = sorted(vec_times)[1]
+    speedup = legacy_med / vec_med
+    print(f"\n  legacy median={legacy_med:.2f}s, vec median={vec_med:.2f}s, "
+          f"speedup={speedup:.1f}x")
+    assert speedup >= 5.0, (
+        f"vectorised path only {speedup:.1f}x faster than legacy "
+        f"(legacy={legacy_med:.2f}s vec={vec_med:.2f}s); regression?"
+    )
