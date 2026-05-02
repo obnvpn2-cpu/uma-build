@@ -8,7 +8,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from routers import features, learn, models, results, stripe
+# Default root logger to INFO so services.* logger.info() reaches Cloud Run.
+# Without this Python defaults root to WARNING and every operational log
+# (parquet load, agent stats progress, paywall masking) is silently dropped.
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+
+from routers import features, learn, models, results, stripe  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
