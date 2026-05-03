@@ -14,6 +14,8 @@ from typing import Any, Dict, List, Optional
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
+from sklearn.isotonic import IsotonicRegression
+from sklearn.metrics import brier_score_loss, log_loss, roc_auc_score
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +55,12 @@ class TrainConfig:
     bagging_freq: int = 5
     min_child_samples: int = 20
     verbose: int = -1
+    # Probability calibration (binary objective only). None disables.
+    # Caller (walk_forward_cv) is responsible for fitting via
+    # LGBMPipeline._fit_calibrator() on a held-out slice of train data.
+    calibration_method: Optional[str] = None  # "isotonic" | "platt" | None
+    calibration_holdout_frac: float = 0.2
+    calibration_min_holdout_rows: int = 5000
 
     def to_lgb_params(self) -> Dict[str, Any]:
         """Convert to LightGBM parameter dict."""
@@ -103,6 +111,10 @@ class LGBMPipeline:
         self.categorical_features: List[str] = []
         self.model_id: str = ""
         self.train_metrics: Dict[str, Any] = {}
+        # Probability calibrator. None until _fit_calibrator() is called.
+        # When non-None, predict() applies it to raw model output.
+        self.calibrator: Optional[Any] = None
+        self.calibration_metrics: Optional[Dict[str, float]] = None
 
     def train(
         self,
@@ -202,23 +214,114 @@ class LGBMPipeline:
                 "n_train": len(X_train),
                 "n_val": len(X_val),
             }
+            # Capture AUC / Brier / ECE on val for binary objective. These
+            # surface in cv_metrics and are critical when comparing
+            # calibrated vs uncalibrated predictions downstream.
+            try:
+                val_raw = self.model.predict(
+                    X_val, num_iteration=self.model.best_iteration
+                )
+                self.train_metrics.update(_eval_classification_metrics(
+                    np.asarray(y_val), np.asarray(val_raw)
+                ))
+            except Exception as e:
+                logger.warning("Failed to compute classification metrics: %s", e)
             logger.info(
-                "Training complete. Best iteration: %d, Val logloss: %.4f",
+                "Training complete. Best iteration: %d, Val logloss: %.4f, "
+                "AUC: %.4f, Brier: %.4f, ECE: %.4f",
                 self.train_metrics["best_iteration"],
                 self.train_metrics["best_val_logloss"],
+                self.train_metrics.get("val_auc", float("nan")),
+                self.train_metrics.get("val_brier", float("nan")),
+                self.train_metrics.get("val_ece", float("nan")),
             )
 
         return self.model
 
-    def predict(self, X: pd.DataFrame) -> np.ndarray:
-        """Return prediction probabilities.
+    def _fit_calibrator(
+        self, raw_scores: np.ndarray, y_true: np.ndarray,
+    ) -> None:
+        """Fit a probability calibrator on a held-out slice.
 
-        Args:
-            X: Feature DataFrame.
+        Caller is responsible for ensuring (raw_scores, y_true) come from
+        rows the model was NOT trained on (otherwise the calibrator
+        memorises training noise). walk_forward_cv handles this by taking
+        the trailing 20% of each fold's train window.
 
-        Returns:
-            Array of predicted probabilities (probability of positive class).
+        Skips with a warning if the holdout is below
+        config.calibration_min_holdout_rows or if y_true contains a single
+        class (calibration is undefined).
         """
+        method = self.config.calibration_method
+        if not method:
+            return
+        n = len(raw_scores)
+        if n < self.config.calibration_min_holdout_rows:
+            logger.warning(
+                "Calibration skipped: holdout rows %d < min %d",
+                n, self.config.calibration_min_holdout_rows,
+            )
+            return
+        if len(np.unique(y_true)) < 2:
+            logger.warning("Calibration skipped: holdout has a single class")
+            return
+
+        # Pre-calibration metrics for diagnostics
+        pre = _eval_classification_metrics(y_true, raw_scores)
+
+        if method == "isotonic":
+            cal = IsotonicRegression(out_of_bounds="clip", y_min=0.0, y_max=1.0)
+            cal.fit(raw_scores, y_true)
+            self.calibrator = cal
+        elif method == "platt":
+            # Platt scaling = logistic regression on raw scores. Implement
+            # only when needed; isotonic is the default for 220K rows.
+            raise NotImplementedError(
+                "Platt scaling stub. Use 'isotonic' until needed."
+            )
+        else:
+            logger.warning("Unknown calibration_method=%s; skipping", method)
+            return
+
+        post_scores = self.calibrator.transform(raw_scores)
+        post = _eval_classification_metrics(y_true, post_scores)
+        self.calibration_metrics = {
+            "method": method,
+            "n_holdout": n,
+            "pre_brier": pre.get("val_brier"),
+            "post_brier": post.get("val_brier"),
+            "pre_ece": pre.get("val_ece"),
+            "post_ece": post.get("val_ece"),
+            "pre_auc": pre.get("val_auc"),
+            "post_auc": post.get("val_auc"),
+        }
+        logger.info(
+            "Calibration (%s) fit on %d rows. Brier %.4f→%.4f, ECE %.4f→%.4f",
+            method, n,
+            pre.get("val_brier", float("nan")), post.get("val_brier", float("nan")),
+            pre.get("val_ece", float("nan")), post.get("val_ece", float("nan")),
+        )
+
+    def predict_raw(self, X: pd.DataFrame) -> np.ndarray:
+        """Return raw model output, BYPASSING the calibrator.
+
+        Used by walk_forward_cv to compute calibration data, and for
+        debugging. Production code should call predict() instead.
+        """
+        return self._predict_internal(X, apply_calibrator=False)
+
+    def predict(self, X: pd.DataFrame) -> np.ndarray:
+        """Return prediction probabilities (calibrated when calibrator is set).
+
+        For binary objective with a fitted calibrator, the return is a
+        calibrated probability. For lambdarank or uncalibrated binary, this
+        is the raw model output (rank score or logit-passed-through-sigmoid).
+        """
+        return self._predict_internal(X, apply_calibrator=True)
+
+    def _predict_internal(
+        self, X: pd.DataFrame, *, apply_calibrator: bool,
+    ) -> np.ndarray:
         if self.model is None:
             raise RuntimeError("Model not trained. Call train() first.")
 
@@ -247,6 +350,8 @@ class LGBMPipeline:
                 X_aligned[col] = X_aligned[col].astype("category")
 
         preds = self.model.predict(X_aligned, num_iteration=self.model.best_iteration)
+        if apply_calibrator and self.calibrator is not None:
+            preds = self.calibrator.transform(preds)
         return preds
 
     def feature_importance(self, importance_type: str = "gain") -> pd.DataFrame:
@@ -291,6 +396,8 @@ class LGBMPipeline:
             "config": asdict(self.config),
             "train_metrics": self.train_metrics,
             "model_id": self.model_id,
+            "calibrator": self.calibrator,
+            "calibration_metrics": self.calibration_metrics,
         }
 
         with open(path, "wb") as f:
@@ -303,22 +410,87 @@ class LGBMPipeline:
     def load(cls, path: str) -> "LGBMPipeline":
         """Load a saved model from disk.
 
-        Args:
-            path: Path to the .pkl file.
-
-        Returns:
-            LGBMPipeline instance with model loaded.
+        Backward compatible with pre-calibration pickles: missing
+        ``calibrator`` and ``calibration_metrics`` keys default to None.
+        Older configs that lack the calibration_* fields are absorbed by
+        TrainConfig dataclass defaults via filtered kwargs.
         """
         with open(path, "rb") as f:
             data = pickle.load(f)
 
-        config = TrainConfig(**data["config"])
+        # Drop unknown keys so adding new TrainConfig fields stays
+        # backward compatible with old pickles (which may also lack new
+        # keys — dataclass defaults fill them in).
+        cfg_fields = {f.name for f in TrainConfig.__dataclass_fields__.values()}
+        cfg_dict = {k: v for k, v in data["config"].items() if k in cfg_fields}
+        config = TrainConfig(**cfg_dict)
+
         pipeline = cls(config=config)
         pipeline.model = data["model"]
         pipeline.feature_names = data["feature_names"]
         pipeline.categorical_features = data.get("categorical_features", [])
         pipeline.train_metrics = data["train_metrics"]
         pipeline.model_id = data["model_id"]
+        pipeline.calibrator = data.get("calibrator")
+        pipeline.calibration_metrics = data.get("calibration_metrics")
 
         logger.info("Model loaded from: %s (id=%s)", path, pipeline.model_id)
         return pipeline
+
+
+def _expected_calibration_error(
+    y_true: np.ndarray, y_pred_prob: np.ndarray, n_bins: int = 10,
+) -> float:
+    """Compute Expected Calibration Error using equal-frequency bins.
+
+    Mirrors the binning logic in services.backtest._calc_calibration so
+    that ECE values are comparable to the reliability diagram surfaced
+    in /api/learn responses.
+    """
+    if len(y_true) == 0:
+        return float("nan")
+    df = pd.DataFrame({"y": y_true, "p": y_pred_prob})
+    try:
+        df["bin"] = pd.qcut(df["p"], q=n_bins, duplicates="drop")
+    except ValueError:
+        # Single-value predictions (degenerate model) — bins collapse.
+        return float("nan")
+    weighted_gap = 0.0
+    n = len(df)
+    for _, group in df.groupby("bin", observed=True):
+        if len(group) == 0:
+            continue
+        weighted_gap += (len(group) / n) * abs(
+            float(group["p"].mean()) - float(group["y"].mean())
+        )
+    return float(weighted_gap)
+
+
+def _eval_classification_metrics(
+    y_true: np.ndarray, y_pred_prob: np.ndarray,
+) -> Dict[str, float]:
+    """Compute AUC / Brier / log loss / ECE on a (y_true, y_pred) pair.
+
+    Returns a dict with val_-prefixed keys so it can be merged directly
+    into LGBMPipeline.train_metrics. NaNs are returned for degenerate
+    inputs (single-class y_true, etc.) — sklearn raises in that case.
+    """
+    metrics: Dict[str, float] = {}
+    try:
+        metrics["val_auc"] = float(roc_auc_score(y_true, y_pred_prob))
+    except ValueError:
+        metrics["val_auc"] = float("nan")
+    try:
+        # brier_score_loss requires probabilities in [0, 1]; clip raw
+        # logits-passed-through-sigmoid output is already in range, but
+        # be defensive against numerical edge cases.
+        clipped = np.clip(y_pred_prob, 0.0, 1.0)
+        metrics["val_brier"] = float(brier_score_loss(y_true, clipped))
+        metrics["val_logloss"] = float(log_loss(y_true, clipped, labels=[0, 1]))
+    except ValueError:
+        metrics["val_brier"] = float("nan")
+        metrics["val_logloss"] = float("nan")
+    metrics["val_ece"] = _expected_calibration_error(
+        np.asarray(y_true), np.asarray(y_pred_prob)
+    )
+    return metrics
