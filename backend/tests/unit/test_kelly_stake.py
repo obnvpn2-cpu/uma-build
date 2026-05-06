@@ -70,6 +70,23 @@ def test_kelly_fraction_clips_prob_above_one():
     assert abs(f.iloc[0] - 1.0) < 1e-9
 
 
+def test_kelly_fraction_handles_nan_prob():
+    """NaN prob → fraction 0 (treated as missing input, not propagated)."""
+    p = pd.Series([np.nan, 0.5])
+    odds = pd.Series([3.0, 3.0])
+    f = ees.kelly_fraction(p, odds, cap=1.0)
+    assert f.iloc[0] == 0  # NaN handled
+    assert f.iloc[1] > 0  # other row unaffected
+
+
+def test_kelly_fraction_handles_zero_and_subunit_odds():
+    """odds == 0 (sentinel) and odds < 1 both produce 0 fraction."""
+    p = pd.Series([0.5, 0.5, 0.5])
+    odds = pd.Series([0.0, 0.5, 0.99])
+    f = ees.kelly_fraction(p, odds, cap=1.0)
+    assert (f == 0).all()
+
+
 # ---- evaluate_strategy_kelly ----------------------------------------------
 
 

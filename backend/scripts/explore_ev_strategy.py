@@ -288,21 +288,32 @@ def passthrough_calibrated(df: pd.DataFrame) -> pd.DataFrame:
 def kelly_fraction(
     p: pd.Series, odds: pd.Series, cap: float = 0.25
 ) -> pd.Series:
-    """Optimal Kelly fraction per row, clipped to [0, cap].
+    """Optimal naive Kelly fraction per row, clipped to [0, cap].
 
-    For decimal odds o and win prob p, the optimal Kelly fraction is
+    For decimal odds o and win prob p, the single-bet Kelly is
     f* = (p*o - 1) / (o - 1) when EV > 0 else 0. We clip to ``cap``
-    (default 0.25 = quarter Kelly) to avoid catastrophic drawdown from
+    (default 0.25 = quarter Kelly) to limit drawdown from
     ill-calibrated probabilities — full Kelly has zero margin for
-    error, while quarter Kelly empirically matches "smooth" growth.
+    error, while quarter Kelly empirically gives smoother growth.
 
-    Returns 0 for rows where odds <= 1 (degenerate, no payout) or
-    when EV is non-positive.
+    Returns 0 for rows where:
+      - odds <= 1 (degenerate, no payout)
+      - p or odds is NaN (missing input)
+      - EV is non-positive (negative or zero edge)
+
+    **Caveat: this is per-row independent Kelly, NOT race-portfolio
+    Kelly.** When a strategy selects multiple horses per race (e.g.
+    T2-T8, E1-E8), the events are mutually exclusive but
+    `kelly_fraction` treats each row independently, so Σf within a
+    race can exceed the optimal joint allocation. Correct treatment
+    requires solving the simultaneous-event Kelly problem
+    (Smoczynski-Tomkins). For exploratory ROI comparison this is
+    acceptable, but DO NOT scale to a real bankroll without fixing.
     """
-    p = p.clip(0, 1)
+    p = p.fillna(0).clip(0, 1)
     odds = odds.fillna(0)
     f_raw = (p * odds - 1) / (odds - 1)
-    f = f_raw.where(odds > 1, 0).clip(lower=0).clip(upper=cap)
+    f = f_raw.where(odds > 1, 0).fillna(0).clip(lower=0).clip(upper=cap)
     return f
 
 
@@ -319,18 +330,31 @@ def evaluate_strategy_kelly(
 
     Stake per row = bankroll_unit * kelly_fraction(p, odds, cap).
     Total stake = sum(kelly_fraction); total payout = sum(f * o * win).
-    ROI = (payout - stake) / stake.
+    ROI = (payout - stake) / stake.  This is **bankroll-weighted**, NOT
+    per-bet — it is the return per unit of capital deployed, not per
+    JPY100 bet. Comparing flat-ROI to Kelly-ROI requires understanding
+    the different denominators.
 
     "Active bets" = rows with f > 0 (strategy includes them AND Kelly
     deems them positive-EV). Inactive rows contribute 0 to numerator
-    and denominator — the strategy masks "consider these" but Kelly
-    decides "actually place".
+    and denominator — the strategy mask says "consider these" but
+    Kelly decides "actually place".
+
+    **Probability calibration matters.** Kelly uses the *absolute*
+    level of p, not just the ranking; if `pred_prob_norm` is from
+    `softmax_per_race` (lambdarank) it is uncalibrated and the
+    resulting fractions are mathematically meaningless. Callers
+    should pass `--use-calibrated` (binary + isotonic) or accept
+    that Kelly numbers from this run are descriptive, not
+    prescriptive. main() emits a warning when the lambdarank path
+    is run with Kelly.
     """
     bets = df.loc[mask].copy()
     if len(bets) == 0:
         return {"strategy": name, "n_bets": 0, "kelly_n_active": 0,
                 "kelly_avg_f": 0.0, "kelly_roi_pct": 0.0}
-    f = kelly_fraction(bets[prob_col], bets[odds_col], cap=kelly_cap)
+    odds_clean = bets[odds_col].fillna(0).astype(float)
+    f = kelly_fraction(bets[prob_col], odds_clean, cap=kelly_cap)
     stake_total = float(f.sum())
     n_active = int((f > 0).sum())
     if stake_total <= 0:
@@ -338,8 +362,7 @@ def evaluate_strategy_kelly(
                 "kelly_n_active": 0, "kelly_avg_f": 0.0,
                 "kelly_roi_pct": 0.0}
     win = bets[win_col].fillna(0).astype(float)
-    odds = bets[odds_col].fillna(0).astype(float)
-    payout = (f * odds * win).sum()
+    payout = (f * odds_clean * win).sum()
     roi = 100.0 * (payout - stake_total) / stake_total
     avg_f = float(f[f > 0].mean()) if n_active > 0 else 0.0
     return {
@@ -585,6 +608,11 @@ def main():
     print(pd.DataFrame(fukusho_results).to_string(index=False))
 
     print(f"\n=== Kelly-sized stakes (cap={args.kelly_cap}) ===")
+    print("ROI is per-unit-staked (bankroll-weighted), not per-bet")
+    if not args.use_calibrated:
+        print("WARNING: --use-calibrated is OFF. pred_prob_norm comes from "
+              "lambdarank+softmax (uncalibrated). Kelly fractions below "
+              "are mathematically dubious — interpret as descriptive only.")
     print("\n--- TANSHO Kelly ---")
     print(pd.DataFrame(tansho_kelly).to_string(index=False))
     print("\n--- EV-filtered TANSHO Kelly ---")
