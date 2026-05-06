@@ -12,7 +12,7 @@ so that Cloud Run scale-out instances share a single source of truth.
 import logging
 import threading
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -42,6 +42,17 @@ class LearnRequest(BaseModel):
     session_id: Optional[str] = Field(
         default=None,
         description="Session ID for rate limiting (optional)",
+    )
+    objective: Literal["lambdarank", "binary"] = Field(
+        default="lambdarank",
+        description="LightGBM objective. 'binary' is Pro-only and falls back "
+        "to 'lambdarank' for free users (with binary_classifier added to "
+        "locked_features).",
+    )
+    calibration: bool = Field(
+        default=False,
+        description="Fit isotonic probability calibration. Requires "
+        "objective='binary' and Pro plan.",
     )
 
 
@@ -142,7 +153,10 @@ async def learn(
 
     thread = threading.Thread(
         target=_run_job,
-        args=(job_id, valid_features, is_pro, user_id, session_id),
+        args=(
+            job_id, valid_features, is_pro, user_id, session_id,
+            request.objective, request.calibration,
+        ),
         daemon=True,
     )
     thread.start()
@@ -156,10 +170,18 @@ def _run_job(
     is_pro: bool = False,
     user_id: str | None = None,
     session_id: str | None = None,
+    objective: str = "lambdarank",
+    calibration: bool = False,
 ) -> None:
     """Execute training in a background thread and update job status."""
     try:
-        results = run_training(selected_feature_ids=features, is_pro=is_pro, user_id=user_id)
+        results = run_training(
+            selected_feature_ids=features,
+            is_pro=is_pro,
+            user_id=user_id,
+            objective=objective,
+            calibration=calibration,
+        )
         if results.get("error"):
             job_store.put(
                 job_id,

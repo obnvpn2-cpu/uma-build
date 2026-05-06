@@ -19,6 +19,7 @@ def mask_results(
     results: Dict[str, Any],
     is_pro: bool = False,
     is_first_unlock: bool = False,
+    binary_locked: bool = False,
 ) -> Dict[str, Any]:
     """Apply paywall masking to training results.
 
@@ -147,6 +148,16 @@ def mask_results(
             },
         ],
     }
+
+    # Surface the binary classifier as a locked feature only when the
+    # caller actually requested it. Avoids confusing default-lambdarank
+    # users with a feature they didn't ask for.
+    if binary_locked:
+        masked["locked_features"].append({
+            "id": "binary_classifier",
+            "name": "確率校正済みモデル",
+            "description": "勝率を校正された確率として出力する Pro 専用モデルです",
+        })
 
     return masked
 

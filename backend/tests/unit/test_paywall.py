@@ -191,6 +191,33 @@ def test_mask_pro_includes_future_prediction():
     assert masked["is_first_unlock"] is False
 
 
+# --- Binary classifier paywall ---
+
+def test_mask_free_binary_locked_appends_feature():
+    """binary_locked=True surfaces the binary_classifier locked feature."""
+    results = _make_full_results()
+    masked = mask_results(results, is_pro=False, binary_locked=True)
+    locked_ids = {item["id"] for item in masked["locked_features"]}
+    assert "binary_classifier" in locked_ids
+    assert len(masked["locked_features"]) == 4
+
+
+def test_mask_free_binary_default_does_not_add_feature():
+    """binary_locked=False keeps the original 3-item locked_features list."""
+    results = _make_full_results()
+    masked = mask_results(results, is_pro=False, binary_locked=False)
+    locked_ids = {item["id"] for item in masked["locked_features"]}
+    assert "binary_classifier" not in locked_ids
+    assert len(masked["locked_features"]) == 3
+
+
+def test_mask_pro_ignores_binary_locked_flag():
+    """Pro users always see locked_features=[] regardless of binary_locked."""
+    results = _make_full_results()
+    masked = mask_results(results, is_pro=True, binary_locked=True)
+    assert masked["locked_features"] == []
+
+
 # --- Edge cases ---
 
 def test_mask_free_empty_breakdowns():
