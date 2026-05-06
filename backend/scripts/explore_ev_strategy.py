@@ -28,6 +28,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -147,13 +148,18 @@ def join_predictions_with_odds(preds: pd.DataFrame) -> pd.DataFrame:
 
 
 def softmax_per_race(df: pd.DataFrame) -> pd.DataFrame:
-    """Convert raw lambdarank scores → probabilities per race via softmax."""
+    """Convert raw lambdarank scores → probabilities per race via softmax.
+
+    Note: lambdarank emits an unbounded rank score, NOT a calibrated
+    probability. The softmax here is a heuristic to feed `pred_prob_norm`
+    into EV-style filters. Use the calibrated binary path
+    (`--use-calibrated`) for genuine probability semantics.
+    """
     df = df.copy()
     df["pred_exp"] = (df.groupby("race_key")["pred_prob"]
                       .transform(lambda s: (s - s.max()).clip(-50)).pipe(
                           lambda s: s.values
                       ))
-    import numpy as np
     df["pred_exp"] = np.exp(df["pred_exp"])
     df["pred_prob_norm"] = df["pred_exp"] / df.groupby("race_key")["pred_exp"].transform("sum")
     df["actual_in3"] = (df["finish_order"] <= 3).astype(int)
@@ -240,9 +246,12 @@ def main():
     df["ev_tan"] = df["pred_prob_norm"] * df["tan_odds"]
     # Use mid of fuku odds range as approximation for place bet EV
     df["fuku_odds_mid"] = (df["fuku_odds_low"] + df["fuku_odds_high"]) / 2
-    # Approximate top3 prob: pred_prob_norm cumulative (not strictly accurate)
-    df["pred_prob_top3_approx"] = df["pred_prob_norm"] * 3
-    df["pred_prob_top3_approx"] = df["pred_prob_top3_approx"].clip(upper=0.95)
+    # Upper-bound proxy for "top-3 finish probability". Multiplying win
+    # probability by 3 then clipping to 0.95 deliberately overestimates
+    # for strong horses (≥0.32 win prob saturates at 0.95). Useful only
+    # as a relative ranking signal for ev_fuku filters; do NOT interpret
+    # the absolute value as a calibrated top-3 probability.
+    df["pred_prob_top3_approx"] = (df["pred_prob_norm"] * 3).clip(upper=0.95)
     df["ev_fuku"] = df["pred_prob_top3_approx"] * df["fuku_odds_mid"]
 
     # Mark top-1 / top-by-EV per race

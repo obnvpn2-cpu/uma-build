@@ -212,13 +212,23 @@ def test_load_pickle_without_calibrator_keys_is_backward_compatible():
 
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "old.pkl")
-        # Simulate an older pickle without the calibration keys.
+        # Simulate an older pickle: drop both the new top-level keys AND
+        # the new TrainConfig fields. This is what an actual pre-C1 pkl
+        # on disk would look like, and exercises the unknown-key filter
+        # in LGBMPipeline.load() that absorbs schema drift.
         from dataclasses import asdict
+        cfg_dict = asdict(pipeline.config)
+        for new_field in (
+            "calibration_method",
+            "calibration_holdout_frac",
+            "calibration_min_holdout_rows",
+        ):
+            cfg_dict.pop(new_field, None)
         old = {
             "model": pipeline.model,
             "feature_names": pipeline.feature_names,
             "categorical_features": pipeline.categorical_features,
-            "config": asdict(pipeline.config),
+            "config": cfg_dict,
             "train_metrics": pipeline.train_metrics,
             "model_id": pipeline.model_id,
         }
@@ -226,6 +236,10 @@ def test_load_pickle_without_calibrator_keys_is_backward_compatible():
             pickle.dump(old, f)
 
         loaded = LGBMPipeline.load(path)
+        # The filtered config should fall back to TrainConfig defaults
+        # for the calibration_* fields.
+        assert loaded.config.calibration_method is None
+        assert loaded.config.calibration_holdout_frac == 0.2
 
     assert loaded.calibrator is None
     assert loaded.calibration_metrics is None

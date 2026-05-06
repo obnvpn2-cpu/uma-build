@@ -441,7 +441,9 @@ class LGBMPipeline:
 def _expected_calibration_error(
     y_true: np.ndarray, y_pred_prob: np.ndarray, n_bins: int = 10,
 ) -> float:
-    """Compute Expected Calibration Error using equal-frequency bins.
+    """Compute Expected Calibration Error using up-to ``n_bins``
+    equal-frequency bins (qcut with ``duplicates="drop"`` may collapse
+    bins when predictions cluster).
 
     Mirrors the binning logic in services.backtest._calc_calibration so
     that ECE values are comparable to the reliability diagram surfaced
@@ -480,15 +482,19 @@ def _eval_classification_metrics(
         metrics["val_auc"] = float(roc_auc_score(y_true, y_pred_prob))
     except ValueError:
         metrics["val_auc"] = float("nan")
+    # brier_score_loss requires probabilities in [0, 1]; the LightGBM
+    # binary head is already in range, but clip defensively against
+    # numerical edge cases. log_loss is fitted separately so a stray
+    # label outside {0,1} (which raises labels=[0,1]) doesn't blank a
+    # healthy Brier number alongside it.
+    clipped = np.clip(y_pred_prob, 0.0, 1.0)
     try:
-        # brier_score_loss requires probabilities in [0, 1]; clip raw
-        # logits-passed-through-sigmoid output is already in range, but
-        # be defensive against numerical edge cases.
-        clipped = np.clip(y_pred_prob, 0.0, 1.0)
         metrics["val_brier"] = float(brier_score_loss(y_true, clipped))
-        metrics["val_logloss"] = float(log_loss(y_true, clipped, labels=[0, 1]))
     except ValueError:
         metrics["val_brier"] = float("nan")
+    try:
+        metrics["val_logloss"] = float(log_loss(y_true, clipped, labels=[0, 1]))
+    except ValueError:
         metrics["val_logloss"] = float("nan")
     metrics["val_ece"] = _expected_calibration_error(
         np.asarray(y_true), np.asarray(y_pred_prob)

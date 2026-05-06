@@ -151,11 +151,24 @@ def walk_forward_cv(
         # calibrator will actually be fit.
         calib_df: Optional[pd.DataFrame] = None
         if not is_rank and config.calibration_method:
-            cutoff = int(len(train_df) * (1 - config.calibration_holdout_frac))
-            candidate_calib = train_df.iloc[cutoff:]
+            row_cutoff = int(len(train_df) * (1 - config.calibration_holdout_frac))
+            # Snap row cutoff to a race boundary so a single race never
+            # straddles fit/calib (otherwise the calibrator would see a
+            # handful of in-sample raw scores). Walk forward to the first
+            # row whose race_key differs from the row immediately before
+            # the cutoff.
+            if has_race_key and 0 < row_cutoff < len(train_df):
+                race_keys_in_train = train_df[group_col].to_numpy()
+                last_train_race = race_keys_in_train[row_cutoff - 1]
+                while (
+                    row_cutoff < len(train_df)
+                    and race_keys_in_train[row_cutoff] == last_train_race
+                ):
+                    row_cutoff += 1
+            candidate_calib = train_df.iloc[row_cutoff:]
             if len(candidate_calib) >= config.calibration_min_holdout_rows:
                 calib_df = candidate_calib
-                train_df = train_df.iloc[:cutoff]
+                train_df = train_df.iloc[:row_cutoff]
             else:
                 logger.warning(
                     "Fold %d: calibration holdout %d < min %d; using full "

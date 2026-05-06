@@ -110,12 +110,14 @@ def run_training(
     # (added later in mask_results). Avoid 403: a degraded result is more
     # useful than a hard error and keeps the paywall UX consistent with
     # other masked features.
+    requested_objective = objective
+    requested_calibration = calibration
     binary_locked_for_free = False
     if not is_pro and (objective == "binary" or calibration):
         logger.info(
             "Free user requested objective=%s calibration=%s — falling "
             "back to lambdarank (Pro-only).",
-            objective, calibration,
+            requested_objective, requested_calibration,
         )
         objective = "lambdarank"
         calibration = False
@@ -123,8 +125,11 @@ def run_training(
 
     logger.info(
         "Starting training: %d features, %d years (is_pro=%s, "
-        "objective=%s, calibration=%s)",
-        len(selected_feature_ids), data_years, is_pro, objective, calibration,
+        "requested_objective=%s, effective_objective=%s, "
+        "requested_calibration=%s, effective_calibration=%s)",
+        len(selected_feature_ids), data_years, is_pro,
+        requested_objective, objective,
+        requested_calibration, calibration,
     )
 
     # 2. Run quick training
