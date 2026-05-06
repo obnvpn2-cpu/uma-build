@@ -1,24 +1,40 @@
 """Odds-derived features for EV-strategy experimentation.
 
-The raw `popularity` column is a near-perfect proxy for market consensus
-and dominates the model — high AUC but useless for EV betting because the
-model just mirrors the market. These derived features carry partial market
-information (the *magnitude* of odds, not the rank) so a model can learn
-where its own ability estimate diverges from the market without reducing
-to "always agree with the favorite".
+The raw `popularity` column is the **rank** of `win_odds` per race and is
+a near-perfect proxy for market consensus — including it dominates the
+model (high AUC) but yields useless EV strategies because the model just
+mirrors the market. These derived features carry primarily *magnitude*
+information from `win_odds`, with limited per-race relative info via
+race-level aggregates (min, mean).
+
+**Honest residual-leak note**: `log_odds_gap_to_fav` is the per-row log
+odds minus the per-race minimum log odds. Combined with `log_win_odds`,
+a model can deduce per-race-min(log_win_odds) but cannot recover the
+full popularity rank from per-row features alone (tree splits do not
+compute per-race ordering). Empirically, including these features
+brought AUC to 0.838 (vs 0.851 with raw popularity, 0.798 without
+either) and kept EV strategies functional (best non-noise -18.5%, vs
+-22.7% without odds and -20.2% with popularity-driven rank model). So
+the leak is partial, not total — the model does not collapse to
+"always agree with favorite". Drop `log_odds_gap_to_fav` if you want
+strictly magnitude-only signal.
 
 All helpers operate on a DataFrame with at least `race_key` and a
 `win_odds` column scaled `actual_odds * 10` (matching the EveryDB2
 convention used in the parquet cache). Rows with `win_odds == 0` are
-treated as missing — the cache contains older races with no odds ingested
-(~41% of races); callers should drop those races or NaN-fill the derived
-columns.
+the EveryDB2 sentinel for "odds not ingested" (~41% of races, mostly
+older). Helpers clip them to `_MIN_REAL_ODDS` so log stays finite, but
+this **silently maps missing data to a constant** — callers should drop
+those races at the row/race level before training (the explore script
+does this automatically when `--with-odds-aware` is set).
 
 Design choices:
-- We never include raw `popularity` in the derived set (that is the leak).
+- We never include raw `popularity` in the derived set (that is the
+  full rank leak; partial rank info via gap-to-fav is a deliberate
+  trade — see note above).
 - `log_win_odds` and `implied_prob` carry magnitude only.
-- `log_odds_gap_to_fav` is per-race (no cross-race signal); horizontally
-  centered so the favorite is always 0 — captures relative position.
+- `log_odds_gap_to_fav` is per-race; favorite is always 0.
+- `log_odds_gap_to_mean` is per-race; centered (sums to 0).
 - `fuku_odds_uncertainty` is independent of win odds; market's place-bet
   spread is a proxy for "how confident is the market this horse is top-3".
 """
@@ -80,11 +96,12 @@ def add_log_odds_gap_to_mean(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def add_fuku_odds_uncertainty(df: pd.DataFrame) -> pd.DataFrame:
-    """Add `fuku_odds_uncertainty` = (high - low) / max(low, 1.0).
+    """Add `fuku_odds_uncertainty` = (high - low) / clip(low, lower=1.0).
 
     Relative spread in the place-bet odds range. High = market is unsure
     whether the horse will be top-3. Independent signal from win odds.
-    Returns NaN when `fuku_odds_low` or `fuku_odds_high` is missing.
+    Returns NaN when `fuku_odds_low` or `fuku_odds_high` is missing or
+    when `high < low` (data corruption — the relationship is invariant).
     """
     df = df.copy()
     low = df.get("fuku_odds_low")
@@ -94,12 +111,18 @@ def add_fuku_odds_uncertainty(df: pd.DataFrame) -> pd.DataFrame:
         return df
     low_real = (low.astype("float64") / _ODDS_SCALE).clip(lower=1.0)
     high_real = high.astype("float64") / _ODDS_SCALE
-    df["fuku_odds_uncertainty"] = (high_real - low_real) / low_real
+    raw = (high_real - low_real) / low_real
+    # Negative spread → corrupted row; mark NaN rather than emitting a
+    # nonsensical negative "uncertainty".
+    df["fuku_odds_uncertainty"] = raw.where(high_real >= low_real, np.nan)
     return df
 
 
 def add_odds_derived_features(df: pd.DataFrame) -> pd.DataFrame:
     """Apply all odds-derived feature helpers in one shot.
+
+    Single in-place mutation on a top-level copy (each helper would
+    otherwise re-copy a 1M-row frame five times).
 
     Returns a copy with new columns:
       - log_win_odds
@@ -110,12 +133,26 @@ def add_odds_derived_features(df: pd.DataFrame) -> pd.DataFrame:
 
     Caller is responsible for dropping rows where source `win_odds == 0`.
     """
-    df = add_log_win_odds(df)
-    df = add_implied_prob(df)
-    df = add_log_odds_gap_to_fav(df)
-    df = add_log_odds_gap_to_mean(df)
-    df = add_fuku_odds_uncertainty(df)
-    return df
+    out = df.copy()
+    real = _real_odds(out["win_odds"])
+    out["log_win_odds"] = np.log(real)
+    out["implied_prob"] = 1.0 / real
+    out["log_odds_gap_to_fav"] = (
+        out["log_win_odds"]
+        - out.groupby("race_key")["log_win_odds"].transform("min")
+    )
+    out["log_odds_gap_to_mean"] = (
+        out["log_win_odds"]
+        - out.groupby("race_key")["log_win_odds"].transform("mean")
+    )
+    if "fuku_odds_low" in out.columns and "fuku_odds_high" in out.columns:
+        low_real = (out["fuku_odds_low"].astype("float64") / _ODDS_SCALE).clip(lower=1.0)
+        high_real = out["fuku_odds_high"].astype("float64") / _ODDS_SCALE
+        raw = (high_real - low_real) / low_real
+        out["fuku_odds_uncertainty"] = raw.where(high_real >= low_real, np.nan)
+    else:
+        out["fuku_odds_uncertainty"] = np.nan
+    return out
 
 
 ODDS_DERIVED_COLUMNS: list[str] = [

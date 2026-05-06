@@ -110,3 +110,67 @@ def test_add_all_does_not_mutate_input():
     snapshot = df.copy()
     _ = add_odds_derived_features(df)
     pd.testing.assert_frame_equal(df, snapshot)
+
+
+def test_single_horse_race_zero_gaps():
+    """Single-horse group: gap-to-fav and gap-to-mean are both 0."""
+    df = pd.DataFrame({"race_key": ["X"], "win_odds": [42]})
+    out = add_odds_derived_features(df)
+    assert out["log_odds_gap_to_fav"].iloc[0] == 0.0
+    assert out["log_odds_gap_to_mean"].iloc[0] == 0.0
+    # log_win_odds and implied_prob are still meaningful
+    assert out["log_win_odds"].iloc[0] > 0  # ln(4.2) > 0
+    assert 0 < out["implied_prob"].iloc[0] < 1
+
+
+def test_all_equal_odds_yields_zero_gaps():
+    """All horses with identical odds: gaps are exactly 0 — no rank info."""
+    df = pd.DataFrame({"race_key": ["A"] * 4, "win_odds": [50, 50, 50, 50]})
+    out = add_odds_derived_features(df)
+    assert (out["log_odds_gap_to_fav"] == 0.0).all()
+    assert (out["log_odds_gap_to_mean"] == 0.0).all()
+
+
+def test_fuku_odds_uncertainty_negative_spread_becomes_nan():
+    """Corrupted high < low: result is NaN (not a negative 'uncertainty')."""
+    df = pd.DataFrame(
+        {
+            "race_key": ["A", "A"],
+            "win_odds": [20, 30],
+            "fuku_odds_low": [30, 20],
+            "fuku_odds_high": [25, 25],  # row 0: high < low → corrupted
+        }
+    )
+    out = add_fuku_odds_uncertainty(df)
+    assert pd.isna(out["fuku_odds_uncertainty"].iloc[0])
+    assert out["fuku_odds_uncertainty"].iloc[1] >= 0
+
+
+def test_implied_prob_strictly_below_one_via_jra_floor():
+    """Document why `< 1` is guaranteed: real_odds is clipped to ≥ 1.05."""
+    # win_odds=0 (sentinel) → real clipped to 1.05 → implied_prob = 1/1.05
+    df = pd.DataFrame({"race_key": ["X", "X"], "win_odds": [0, 1000]})
+    out = add_implied_prob(df)
+    # max possible implied_prob ≈ 0.952
+    assert out["implied_prob"].max() <= 1.0 / 1.05 + 1e-9
+    assert (out["implied_prob"] > 0).all()
+
+
+def test_add_all_groupby_alignment_with_unsorted_index():
+    """groupby+transform must align by index, not by position."""
+    df = pd.DataFrame(
+        {
+            "race_key": ["A", "B", "A", "B"],
+            "win_odds": [20, 30, 100, 50],  # A: [20,100], B: [30,50]
+        },
+        index=[10, 20, 30, 40],
+    )
+    out = add_odds_derived_features(df)
+    # Race A: min log_odds = log(2.0); rows at index 10 and 30
+    # Race B: min log_odds = log(3.0); rows at index 20 and 40
+    fav_a = out.loc[10, "log_odds_gap_to_fav"]
+    fav_b = out.loc[20, "log_odds_gap_to_fav"]
+    assert fav_a == 0.0  # A favorite (win_odds=20)
+    assert fav_b == 0.0  # B favorite (win_odds=30)
+    # Index preserved
+    assert list(out.index) == [10, 20, 30, 40]
