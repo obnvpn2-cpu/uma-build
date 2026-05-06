@@ -35,7 +35,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from ml.feature_selector import filter_available_columns, select_columns  # noqa: E402
-from ml.pipeline import TrainConfig  # noqa: E402
+from ml.pipeline import TrainConfig, _eval_classification_metrics  # noqa: E402
 from ml.walk_forward import walk_forward_cv  # noqa: E402
 from services.feature_catalog import get_default_feature_ids  # noqa: E402
 from services.odds_features import (  # noqa: E402
@@ -168,23 +168,29 @@ def load_predictions(
             merged = merged.merge(p, on=["race_key", "horse_key"], how="inner")
         prob_cols = [c for c in merged.columns if c.startswith("pred_prob_seed_")]
         merged["pred_prob"] = merged[prob_cols].mean(axis=1)
-        # Re-merge auxiliary columns from the last fold's predictions_df
-        # (cv_fold, target_win, etc.) so the downstream join still works.
-        last_full = cv["predictions_df"][[
+        # Re-attach aux cols (cv_fold, actual_win, etc.) from the
+        # last-seed run. These are seed-invariant: walk_forward_cv splits
+        # folds deterministically by sorted race_keys, so cv_fold is
+        # identical across seeds; actual_win and other meta are just
+        # row-level facts copied from val_df.
+        last_seed_full = cv["predictions_df"][[
             c for c in cv["predictions_df"].columns
             if c not in ("pred_prob",)
         ]]
         predictions_df = merged.merge(
-            last_full, on=["race_key", "horse_key"], how="inner"
+            last_seed_full, on=["race_key", "horse_key"], how="inner"
         )
         cv_metrics = dict(first_metrics or {})
         cv_metrics["ensemble"] = {"n_seeds": len(seeds_list), "seeds": seeds_list}
         # Recompute brier/auc/ece on the *ensemble* predictions.
         # First-seed metrics alone hide the bagging gain on extremes.
-        if "target_win" in predictions_df.columns:
-            from ml.pipeline import _eval_classification_metrics
+        # walk_forward_cv writes the binary label as `actual_win`
+        # (1 if finish_order==1 else 0). target_win is a feature_builder
+        # column, not part of the predictions output.
+        label_col = "actual_win"
+        if label_col in predictions_df.columns:
             ensemble_metrics = _eval_classification_metrics(
-                predictions_df["target_win"].values.astype(int),
+                predictions_df[label_col].values.astype(int),
                 predictions_df["pred_prob"].values.astype(float),
             )
             cv_metrics["ensemble"]["pred_prob_brier"] = float(
@@ -353,7 +359,14 @@ def main():
         "averaged per (race_key, horse_key). Default '42' = single model.",
     )
     args = parser.parse_args()
-    seeds_list = [int(s.strip()) for s in args.seeds.split(",") if s.strip()]
+    try:
+        seeds_list = [int(s.strip()) for s in args.seeds.split(",") if s.strip()]
+    except ValueError as e:
+        parser.error(f"--seeds must be comma-separated integers: {e}")
+    if not seeds_list:
+        parser.error(
+            "--seeds must contain at least one integer (got empty list)"
+        )
 
     print(f"DB:     {DB_PATH}")
     print(f"Cache:  {PARQUET}\n")
