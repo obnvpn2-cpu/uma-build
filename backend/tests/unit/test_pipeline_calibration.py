@@ -26,6 +26,7 @@ from ml.pipeline import (  # noqa: E402
     TrainConfig,
     _eval_classification_metrics,
     _expected_calibration_error,
+    _GroupedIsotonic,
 )
 
 # --- helpers ----------------------------------------------------------------
@@ -305,6 +306,153 @@ def test_lambdarank_objective_unaffected_by_calibration_fields():
     assert pipeline.calibrator is None
     out = pipeline.predict(X_val)
     assert out.shape == (len(X_val),)
+
+
+def test_grouped_isotonic_dispatches_per_bucket():
+    """Each bucket gets its own isotonic; small bucket falls back to global."""
+    rng = np.random.default_rng(0)
+    n = 6000
+    raw = rng.uniform(0.0, 1.0, n)
+    # Two regimes: bucket 0 (rare wins, p=0.05*raw), bucket 1 (frequent
+    # wins, p=0.5*raw). One global isotonic would average these and
+    # under/overfit each. Per-bucket should track each regime cleanly.
+    groups = rng.choice([10, 14], size=n)  # bucket 0 = 10-head, 1 = 14-head
+    p_true = np.where(groups == 10, 0.05 * raw, 0.5 * raw)
+    y = (rng.uniform(0.0, 1.0, n) < p_true).astype(int)
+
+    cal = _GroupedIsotonic(bins=[(8, 12), (13, 16)], min_rows=500)
+    cal.fit(raw, y, groups)
+    # Two distinct calibrators were fit (both buckets have ≥ 500 rows).
+    assert len(cal.calibrators) == 2
+    # Transform respects group dispatch: same raw score should map to a
+    # much lower calibrated probability under the rare-win regime.
+    test_raw = np.array([0.8, 0.8])
+    test_groups = np.array([10, 14])
+    out = cal.transform(test_raw, test_groups)
+    assert out[1] > out[0] * 2, (
+        f"Expected bucket-14 calibration ≫ bucket-10 at raw=0.8, "
+        f"got {out}"
+    )
+
+
+def test_grouped_isotonic_falls_back_for_small_bucket():
+    """Bucket below min_rows uses the global fallback isotonic."""
+    rng = np.random.default_rng(1)
+    n_main = 3000
+    n_small = 50  # below min_rows=500
+    raw = np.concatenate([rng.uniform(0, 1, n_main), rng.uniform(0, 1, n_small)])
+    groups = np.concatenate([np.full(n_main, 14), np.full(n_small, 18)])
+    y = (rng.uniform(0, 1, len(raw)) < 0.3 * raw).astype(int)
+
+    cal = _GroupedIsotonic(bins=[(13, 16), (17, 18)], min_rows=500)
+    cal.fit(raw, y, groups)
+    # Bucket 0 (14-head, 3000 rows) gets a per-bin calibrator.
+    assert 0 in cal.calibrators
+    # Bucket 1 (18-head, 50 rows) does NOT — falls back at predict time.
+    assert 1 not in cal.calibrators
+    # Transform on bucket-1 rows should still produce a calibrated value
+    # (via the fallback) without raising.
+    out = cal.transform(np.array([0.5]), np.array([18]))
+    assert 0.0 <= out[0] <= 1.0
+
+
+def test_grouped_isotonic_transform_handles_unmapped_groups():
+    """Groups outside any declared bin route to the global fallback."""
+    rng = np.random.default_rng(2)
+    n = 2000
+    raw = rng.uniform(0, 1, n)
+    groups = np.full(n, 14)  # all in bucket 0
+    y = (rng.uniform(0, 1, n) < 0.4 * raw).astype(int)
+    cal = _GroupedIsotonic(bins=[(13, 16)], min_rows=500)
+    cal.fit(raw, y, groups)
+    # Group 99 is outside the only declared bin → use fallback.
+    out = cal.transform(np.array([0.5, 0.5]), np.array([14, 99]))
+    assert 0.0 <= out[0] <= 1.0
+    assert 0.0 <= out[1] <= 1.0
+
+
+def test_pipeline_grouped_calibration_end_to_end():
+    """LGBMPipeline + grouped calibrator: predict() reads size_col from X.
+
+    Mirrors production: field_size is a META column kept OUT of training
+    features and attached only to predict-time X for grouped dispatch.
+    """
+    (X_tr, y_tr), (X_cal, y_cal), (X_val, y_val) = _make_synthetic_binary(
+        n_train=8000, n_calib=6000, n_val=4000,
+    )
+
+    cfg = TrainConfig(
+        objective_type="binary",
+        calibration_method="isotonic",
+        calibration_min_holdout_rows=1000,
+        calibration_size_col="field_size",
+        calibration_size_bins=[[8, 12], [13, 16], [17, 18]],
+        calibration_per_size_min_rows=500,
+        num_boost_round=80,
+        early_stopping_rounds=15,
+    )
+    pipeline = LGBMPipeline(config=cfg)
+    # Train on bare features (no field_size) — mirrors walk_forward.
+    pipeline.train(X_tr, y_tr, X_val, y_val)
+
+    # Synthesize field_size only for calibration + predict.
+    rng = np.random.default_rng(7)
+    cal_groups = rng.choice([10, 14, 17], size=len(X_cal))
+    raw_calib = pipeline.predict_raw(X_cal)
+    pipeline._fit_calibrator(raw_calib, y_cal.values, groups=cal_groups)
+
+    assert isinstance(pipeline.calibrator, _GroupedIsotonic)
+    assert "per_bin" in pipeline.calibration_metrics
+    assert pipeline.calibration_metrics["size_col"] == "field_size"
+
+    # Predict-time X gets field_size attached (not a model feature).
+    X_val_pred = X_val.copy()
+    X_val_pred["field_size"] = rng.choice([10, 14, 17], size=len(X_val))
+    out = pipeline.predict(X_val_pred)
+    assert out.shape == (len(X_val),)
+    assert (out >= 0.0).all() and (out <= 1.0).all()
+
+    # Predict without size_col in X must raise — caller responsibility.
+    with pytest.raises(RuntimeError, match="field_size"):
+        pipeline.predict(X_val)
+
+
+def test_grouped_calibration_save_load_roundtrip():
+    """Save → load preserves the GroupedIsotonic; predict matches."""
+    (X_tr, y_tr), (X_cal, y_cal), (X_val, y_val) = _make_synthetic_binary(
+        n_train=4000, n_calib=3000, n_val=2000,
+    )
+
+    cfg = TrainConfig(
+        objective_type="binary",
+        calibration_method="isotonic",
+        calibration_min_holdout_rows=500,
+        calibration_size_col="field_size",
+        calibration_size_bins=[[8, 12], [13, 16], [17, 18]],
+        calibration_per_size_min_rows=300,
+        num_boost_round=50,
+        early_stopping_rounds=10,
+    )
+    pipeline = LGBMPipeline(config=cfg)
+    pipeline.train(X_tr, y_tr, X_val, y_val)
+    rng = np.random.default_rng(9)
+    cal_groups = rng.choice([10, 14, 17], size=len(X_cal))
+    pipeline._fit_calibrator(
+        pipeline.predict_raw(X_cal), y_cal.values, groups=cal_groups,
+    )
+    X_val_pred = X_val.copy()
+    val_groups = rng.choice([10, 14, 17], size=len(X_val))
+    X_val_pred["field_size"] = val_groups
+    p_before = pipeline.predict(X_val_pred)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "grouped.pkl")
+        pipeline.save(path)
+        loaded = LGBMPipeline.load(path)
+
+    assert isinstance(loaded.calibrator, _GroupedIsotonic)
+    p_after = loaded.predict(X_val_pred)
+    np.testing.assert_allclose(p_before, p_after, rtol=1e-12, atol=1e-12)
 
 
 if __name__ == "__main__":

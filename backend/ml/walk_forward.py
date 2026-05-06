@@ -218,14 +218,34 @@ def walk_forward_cv(
         # Fit isotonic calibrator on the chronological holdout. predict_raw
         # bypasses the (still-None) calibrator deliberately; once fit, the
         # subsequent pipeline.predict() on val data returns calibrated probs.
+        # When calibration_size_col is set, also pass per-row groups so a
+        # _GroupedIsotonic gets fit (one per size bucket).
         if calib_df is not None and X_calib is not None:
             raw_calib = pipeline.predict_raw(X_calib)
+            size_col = config.calibration_size_col
+            if size_col and size_col in calib_df.columns:
+                groups = pd.to_numeric(
+                    calib_df[size_col], errors="coerce",
+                ).fillna(-1).astype(int).to_numpy()
+            else:
+                groups = None
             pipeline._fit_calibrator(
-                raw_calib, calib_df[target_col].to_numpy(),
+                raw_calib, calib_df[target_col].to_numpy(), groups=groups,
             )
 
-        # Predict (calibrated when calibrator is fit)
-        val_preds = pipeline.predict(X_val)
+        # Predict (calibrated when calibrator is fit). When a grouped
+        # calibrator is in play, attach the size column to the predict-
+        # time X so _predict_internal can dispatch per-bucket — the
+        # column is NOT in feature_names so LightGBM ignores it. We use
+        # a separate copy here to avoid leaking it into the training
+        # X_val, which already went through lgb.Dataset.
+        size_col = config.calibration_size_col
+        if size_col and size_col in val_df.columns:
+            X_val_predict = X_val.copy()
+            X_val_predict[size_col] = val_df[size_col].values
+        else:
+            X_val_predict = X_val
+        val_preds = pipeline.predict(X_val_predict)
 
         # Collect validation predictions
         base_cols = [c for c in ["race_key", "horse_key", "finish_order"]

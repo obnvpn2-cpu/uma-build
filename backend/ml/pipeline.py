@@ -61,6 +61,16 @@ class TrainConfig:
     calibration_method: Optional[str] = None  # "isotonic" | "platt" | None
     calibration_holdout_frac: float = 0.2
     calibration_min_holdout_rows: int = 5000
+    # Optional per-group calibration. When ``calibration_size_col`` is set,
+    # _fit_calibrator() requires a ``groups`` array and fits one isotonic
+    # per bin in ``calibration_size_bins`` (inclusive ranges). predict()
+    # reads X[calibration_size_col] to dispatch the right calibrator at
+    # inference time. Bins that fall under
+    # ``calibration_per_size_min_rows`` are not fit; rows that hit them
+    # use the global fallback isotonic. None disables grouping.
+    calibration_size_col: Optional[str] = None
+    calibration_size_bins: Optional[List[List[int]]] = None
+    calibration_per_size_min_rows: int = 500
 
     def to_lgb_params(self) -> Dict[str, Any]:
         """Convert to LightGBM parameter dict."""
@@ -239,7 +249,10 @@ class LGBMPipeline:
         return self.model
 
     def _fit_calibrator(
-        self, raw_scores: np.ndarray, y_true: np.ndarray,
+        self,
+        raw_scores: np.ndarray,
+        y_true: np.ndarray,
+        groups: Optional[np.ndarray] = None,
     ) -> None:
         """Fit a probability calibrator on a held-out slice.
 
@@ -247,6 +260,12 @@ class LGBMPipeline:
         rows the model was NOT trained on (otherwise the calibrator
         memorises training noise). walk_forward_cv handles this by taking
         the trailing 20% of each fold's train window.
+
+        When ``config.calibration_size_col`` is set, ``groups`` (a
+        per-row integer array, typically field_size) must be provided —
+        the fitted calibrator is a _GroupedIsotonic that dispatches on
+        the row's bin at predict time. Without ``calibration_size_col``
+        a single global isotonic is fit and ``groups`` is ignored.
 
         Skips with a warning if the holdout is below
         config.calibration_min_holdout_rows or if y_true contains a single
@@ -269,21 +288,43 @@ class LGBMPipeline:
         # Pre-calibration metrics for diagnostics
         pre = _eval_classification_metrics(y_true, raw_scores)
 
-        if method == "isotonic":
-            cal = IsotonicRegression(out_of_bounds="clip", y_min=0.0, y_max=1.0)
-            cal.fit(raw_scores, y_true)
-            self.calibrator = cal
-        elif method == "platt":
+        if method == "platt":
             # Platt scaling = logistic regression on raw scores. Implement
             # only when needed; isotonic is the default for 220K rows.
             raise NotImplementedError(
                 "Platt scaling stub. Use 'isotonic' until needed."
             )
-        else:
+        if method != "isotonic":
             logger.warning("Unknown calibration_method=%s; skipping", method)
             return
 
-        post_scores = self.calibrator.transform(raw_scores)
+        size_col = self.config.calibration_size_col
+        if size_col:
+            if groups is None:
+                logger.warning(
+                    "Calibration skipped: calibration_size_col=%s set but no "
+                    "groups provided to _fit_calibrator()",
+                    size_col,
+                )
+                return
+            bins = self.config.calibration_size_bins or [
+                [1, 12], [13, 16], [17, 18],
+            ]
+            cal = _GroupedIsotonic(
+                bins=[(int(lo), int(hi)) for lo, hi in bins],
+                min_rows=self.config.calibration_per_size_min_rows,
+            )
+            cal.fit(np.asarray(raw_scores), np.asarray(y_true), np.asarray(groups))
+            self.calibrator = cal
+            post_scores = cal.transform(raw_scores, groups)
+            per_bin = cal.per_bin_metrics(raw_scores, y_true, groups)
+        else:
+            cal = IsotonicRegression(out_of_bounds="clip", y_min=0.0, y_max=1.0)
+            cal.fit(raw_scores, y_true)
+            self.calibrator = cal
+            post_scores = cal.transform(raw_scores)
+            per_bin = None
+
         post = _eval_classification_metrics(y_true, post_scores)
         self.calibration_metrics = {
             "method": method,
@@ -295,9 +336,12 @@ class LGBMPipeline:
             "pre_auc": pre.get("val_auc"),
             "post_auc": post.get("val_auc"),
         }
+        if size_col and per_bin is not None:
+            self.calibration_metrics["size_col"] = size_col
+            self.calibration_metrics["per_bin"] = per_bin
         logger.info(
-            "Calibration (%s) fit on %d rows. Brier %.4f→%.4f, ECE %.4f→%.4f",
-            method, n,
+            "Calibration (%s%s) fit on %d rows. Brier %.4f→%.4f, ECE %.4f→%.4f",
+            method, f"+per-{size_col}" if size_col else "", n,
             pre.get("val_brier", float("nan")), post.get("val_brier", float("nan")),
             pre.get("val_ece", float("nan")), post.get("val_ece", float("nan")),
         )
@@ -351,7 +395,19 @@ class LGBMPipeline:
 
         preds = self.model.predict(X_aligned, num_iteration=self.model.best_iteration)
         if apply_calibrator and self.calibrator is not None:
-            preds = self.calibrator.transform(preds)
+            if isinstance(self.calibrator, _GroupedIsotonic):
+                size_col = self.config.calibration_size_col
+                if size_col is None or size_col not in X.columns:
+                    raise RuntimeError(
+                        f"Grouped calibrator requires column '{size_col}' "
+                        "in X for predict(). Pass it as a feature or in X."
+                    )
+                groups = pd.to_numeric(
+                    X[size_col], errors="coerce",
+                ).fillna(-1).astype(int).to_numpy()
+                preds = self.calibrator.transform(preds, groups)
+            else:
+                preds = self.calibrator.transform(preds)
         return preds
 
     def feature_importance(self, importance_type: str = "gain") -> pd.DataFrame:
@@ -500,3 +556,115 @@ def _eval_classification_metrics(
         np.asarray(y_true), np.asarray(y_pred_prob)
     )
     return metrics
+
+
+class _GroupedIsotonic:
+    """Per-group isotonic calibrator for race-size-conditional probabilities.
+
+    Horse racing fields cluster at distinct sizes (8-12 头, 13-16, 17-18)
+    and the win-probability distribution differs across them — the top
+    horse in an 8-head race is genuinely more likely to win than the top
+    horse in an 18-head race, even at equal raw scores. A single
+    isotonic averages those regimes; one-per-bin captures them.
+
+    ``bins`` is a list of inclusive ``(lo, hi)`` ranges. At fit time we
+    train one IsotonicRegression per bin that has ≥ ``min_rows`` of
+    holdout data; smaller bins (and rows whose group falls outside any
+    bin) fall back to the global isotonic fit on all rows.
+    """
+
+    def __init__(self, bins: List[tuple], min_rows: int = 500) -> None:
+        self.bins: List[tuple] = list(bins)
+        self.min_rows: int = int(min_rows)
+        self.calibrators: Dict[int, IsotonicRegression] = {}
+        self.fallback: Optional[IsotonicRegression] = None
+        self.bin_n: Dict[int, int] = {}
+
+    def _bin_idx(self, value: int) -> int:
+        for i, (lo, hi) in enumerate(self.bins):
+            if lo <= value <= hi:
+                return i
+        return -1
+
+    def fit(
+        self,
+        raw_scores: np.ndarray,
+        y_true: np.ndarray,
+        groups: np.ndarray,
+    ) -> "_GroupedIsotonic":
+        # Always fit the fallback on the entire holdout so unmapped or
+        # too-small bins still get a calibrated transform.
+        self.fallback = IsotonicRegression(
+            out_of_bounds="clip", y_min=0.0, y_max=1.0,
+        )
+        self.fallback.fit(raw_scores, y_true)
+        bin_assign = np.array([self._bin_idx(int(g)) for g in groups])
+        for i in range(len(self.bins)):
+            mask = bin_assign == i
+            n = int(mask.sum())
+            self.bin_n[i] = n
+            if n < self.min_rows:
+                continue
+            if len(np.unique(y_true[mask])) < 2:
+                # Bin has all positives or all negatives → isotonic
+                # would degenerate. Leave it on the fallback.
+                continue
+            cal = IsotonicRegression(
+                out_of_bounds="clip", y_min=0.0, y_max=1.0,
+            )
+            cal.fit(raw_scores[mask], y_true[mask])
+            self.calibrators[i] = cal
+        return self
+
+    def transform(
+        self, raw_scores: np.ndarray, groups: np.ndarray,
+    ) -> np.ndarray:
+        if self.fallback is None:
+            raise RuntimeError("_GroupedIsotonic.transform called before fit")
+        raw_scores = np.asarray(raw_scores, dtype=float)
+        out = np.empty_like(raw_scores, dtype=float)
+        bin_assign = np.array([self._bin_idx(int(g)) for g in groups])
+        for i, (lo, hi) in enumerate(self.bins):
+            mask = bin_assign == i
+            if not mask.any():
+                continue
+            cal = self.calibrators.get(i, self.fallback)
+            out[mask] = cal.transform(raw_scores[mask])
+        # Rows whose group fell outside every bin → fallback.
+        unmapped = bin_assign == -1
+        if unmapped.any():
+            out[unmapped] = self.fallback.transform(raw_scores[unmapped])
+        return out
+
+    def per_bin_metrics(
+        self,
+        raw_scores: np.ndarray,
+        y_true: np.ndarray,
+        groups: np.ndarray,
+    ) -> Dict[str, Dict[str, float]]:
+        """Per-bin pre/post Brier+ECE on the holdout used to fit.
+
+        Stored on calibration_metrics["per_bin"] for diagnostics — useful
+        to see which size buckets benefit (or are starved of data).
+        """
+        bin_assign = np.array([self._bin_idx(int(g)) for g in groups])
+        per_bin: Dict[str, Dict[str, float]] = {}
+        for i, (lo, hi) in enumerate(self.bins):
+            mask = bin_assign == i
+            n = int(mask.sum())
+            if n == 0:
+                continue
+            label = f"size_{lo}_{hi}"
+            pre = _eval_classification_metrics(y_true[mask], raw_scores[mask])
+            cal = self.calibrators.get(i, self.fallback)
+            post_p = cal.transform(raw_scores[mask])
+            post = _eval_classification_metrics(y_true[mask], post_p)
+            per_bin[label] = {
+                "n": n,
+                "fitted_per_bin": i in self.calibrators,
+                "pre_brier": pre.get("val_brier"),
+                "post_brier": post.get("val_brier"),
+                "pre_ece": pre.get("val_ece"),
+                "post_ece": post.get("val_ece"),
+            }
+        return per_bin
