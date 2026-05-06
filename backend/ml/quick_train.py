@@ -109,6 +109,8 @@ def quick_train(
     data_years: int = 2,
     target_col: str = "target_win",
     config: Optional[TrainConfig] = None,
+    objective: str = "lambdarank",
+    calibration: bool = False,
 ) -> Dict[str, Any]:
     """Quick training pipeline.
 
@@ -125,7 +127,14 @@ def quick_train(
         db_path: Path to the JRA-VAN database.
         data_years: Number of years of data.
         target_col: Target column name.
-        config: Optional LightGBM config.
+        config: Optional LightGBM config. When provided, overrides
+            ``objective`` and ``calibration`` shorthand args.
+        objective: ``"lambdarank"`` (default) or ``"binary"``. Ignored
+            when ``config`` is supplied.
+        calibration: When True with ``objective="binary"``, fits an
+            isotonic calibrator on a per-fold chronological holdout via
+            walk_forward_cv. Ignored for lambdarank or when ``config``
+            is supplied.
 
     Returns:
         Dict with model_id, summary stats, predictions, and feature importance.
@@ -167,7 +176,17 @@ def quick_train(
 
     # 3. Train with walk-forward CV (3 folds)
     if config is None:
-        config = TrainConfig(target_col=target_col)
+        # Calibration only makes sense for binary objective; silently drop
+        # the flag for lambdarank instead of erroring (lambdarank scores
+        # have no probability semantics to calibrate).
+        cal_method = (
+            "isotonic" if (calibration and objective == "binary") else None
+        )
+        config = TrainConfig(
+            target_col=target_col,
+            objective_type=objective,
+            calibration_method=cal_method,
+        )
 
     # Fallback to binary if lambdarank prerequisites missing
     if config.objective_type == "lambdarank":

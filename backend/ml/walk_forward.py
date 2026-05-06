@@ -98,6 +98,18 @@ def walk_forward_cv(
     if sort_cols:
         df = df.sort_values(sort_cols).reset_index(drop=True)
 
+    # Time-series invariant: after sort, race_date must be non-decreasing.
+    # Catches upstream shuffling that would silently leak future labels into
+    # earlier folds via the calibration holdout split below.
+    if "race_date" in df.columns:
+        rd = pd.to_datetime(df["race_date"], errors="coerce")
+        if not rd.is_monotonic_increasing:
+            raise AssertionError(
+                "walk_forward_cv: race_date is not monotonically "
+                "non-decreasing after sort. Refusing to run (time-series "
+                "leak risk)."
+            )
+
     has_race_key = "race_key" in df.columns
     if has_race_key:
         race_keys = df["race_key"].unique()
@@ -129,20 +141,63 @@ def walk_forward_cv(
                            fold_i, len(train_df), len(val_df))
             continue
 
+        # Carve out a chronological tail of train_df as the calibration
+        # holdout (binary + calibration_method only). The pipeline will be
+        # trained on the leading (1 - calibration_holdout_frac) slice, then
+        # _fit_calibrator() runs on the held-out tail using predict_raw().
+        # If the candidate holdout is below the configured floor we keep
+        # the full train slice for fitting and skip calibration, since
+        # sacrificing 20% of training data only makes sense when the
+        # calibrator will actually be fit.
+        calib_df: Optional[pd.DataFrame] = None
+        if not is_rank and config.calibration_method:
+            row_cutoff = int(len(train_df) * (1 - config.calibration_holdout_frac))
+            # Snap row cutoff to a race boundary so a single race never
+            # straddles fit/calib (otherwise the calibrator would see a
+            # handful of in-sample raw scores). Walk forward to the first
+            # row whose race_key differs from the row immediately before
+            # the cutoff.
+            if has_race_key and 0 < row_cutoff < len(train_df):
+                race_keys_in_train = train_df[group_col].to_numpy()
+                last_train_race = race_keys_in_train[row_cutoff - 1]
+                while (
+                    row_cutoff < len(train_df)
+                    and race_keys_in_train[row_cutoff] == last_train_race
+                ):
+                    row_cutoff += 1
+            candidate_calib = train_df.iloc[row_cutoff:]
+            if len(candidate_calib) >= config.calibration_min_holdout_rows:
+                calib_df = candidate_calib
+                train_df = train_df.iloc[:row_cutoff]
+            else:
+                logger.warning(
+                    "Fold %d: calibration holdout %d < min %d; using full "
+                    "train slice and skipping calibrator fit.",
+                    fold_i, len(candidate_calib),
+                    config.calibration_min_holdout_rows,
+                )
+
         X_train = train_df[feature_cols].copy()
         X_val = val_df[feature_cols].copy()
+        X_calib = calib_df[feature_cols].copy() if calib_df is not None else None
 
-        # Fill NaN
+        # Fill NaN using train_df statistics (calibration holdout shares the
+        # same imputation as val to mirror how production inference will see
+        # data the model was not trained on).
         for col in feature_cols:
             if X_train[col].dtype in [np.float64, np.float32, np.int64, np.int32, float, int]:
                 median_val = X_train[col].median()
                 X_train[col] = X_train[col].fillna(median_val)
                 X_val[col] = X_val[col].fillna(median_val)
+                if X_calib is not None:
+                    X_calib[col] = X_calib[col].fillna(median_val)
             else:
                 mode_val = X_train[col].mode()
                 fill_val = mode_val.iloc[0] if len(mode_val) > 0 else "unknown"
                 X_train[col] = X_train[col].fillna(fill_val)
                 X_val[col] = X_val[col].fillna(fill_val)
+                if X_calib is not None:
+                    X_calib[col] = X_calib[col].fillna(fill_val)
 
         # Prepare labels and groups
         if is_rank and has_race_key and "finish_order" in train_df.columns:
@@ -160,7 +215,16 @@ def walk_forward_cv(
         pipeline = LGBMPipeline(config=config)
         pipeline.train(X_train, y_train, X_val, y_val, group_train, group_val)
 
-        # Predict
+        # Fit isotonic calibrator on the chronological holdout. predict_raw
+        # bypasses the (still-None) calibrator deliberately; once fit, the
+        # subsequent pipeline.predict() on val data returns calibrated probs.
+        if calib_df is not None and X_calib is not None:
+            raw_calib = pipeline.predict_raw(X_calib)
+            pipeline._fit_calibrator(
+                raw_calib, calib_df[target_col].to_numpy(),
+            )
+
+        # Predict (calibrated when calibrator is fit)
         val_preds = pipeline.predict(X_val)
 
         # Collect validation predictions
@@ -191,12 +255,15 @@ def walk_forward_cv(
         pred_df["cv_fold"] = fold_i
         all_val_predictions.append(pred_df)
 
-        fold_metrics.append({
+        fold_record: Dict[str, Any] = {
             "fold": fold_i,
             "n_train": len(X_train),
             "n_val": len(X_val),
             **pipeline.train_metrics,
-        })
+        }
+        if pipeline.calibration_metrics is not None:
+            fold_record["calibration"] = pipeline.calibration_metrics
+        fold_metrics.append(fold_record)
 
         logger.info(
             "Fold %d: train=%d, val=%d, metrics=%s",
@@ -253,8 +320,37 @@ def _aggregate_cv_metrics(
         }
     else:
         logloss_vals = [m.get("best_val_logloss", np.nan) for m in fold_metrics]
-        return {
+        auc_vals = [m.get("val_auc", np.nan) for m in fold_metrics]
+        brier_vals = [m.get("val_brier", np.nan) for m in fold_metrics]
+        ece_vals = [m.get("val_ece", np.nan) for m in fold_metrics]
+        summary: Dict[str, Any] = {
             "n_folds": len(fold_metrics),
             "logloss_mean": float(np.nanmean(logloss_vals)),
             "logloss_std": float(np.nanstd(logloss_vals)),
+            "auc_mean": float(np.nanmean(auc_vals)),
+            "auc_std": float(np.nanstd(auc_vals)),
+            "brier_mean": float(np.nanmean(brier_vals)),
+            "brier_std": float(np.nanstd(brier_vals)),
+            "ece_mean": float(np.nanmean(ece_vals)),
+            "ece_std": float(np.nanstd(ece_vals)),
         }
+        # Surface holdout-side calibration improvement when at least one
+        # fold actually fit a calibrator. These are evaluated on the data
+        # the calibrator was fit on, so they're a deterministic floor on
+        # what calibration achieved (val-side numbers are the real test).
+        cal_records = [m.get("calibration") for m in fold_metrics if m.get("calibration")]
+        if cal_records:
+            summary["calibration_method"] = cal_records[-1].get("method")
+            summary["calibration_pre_brier_mean"] = float(np.nanmean(
+                [c.get("pre_brier", np.nan) for c in cal_records]
+            ))
+            summary["calibration_post_brier_mean"] = float(np.nanmean(
+                [c.get("post_brier", np.nan) for c in cal_records]
+            ))
+            summary["calibration_pre_ece_mean"] = float(np.nanmean(
+                [c.get("pre_ece", np.nan) for c in cal_records]
+            ))
+            summary["calibration_post_ece_mean"] = float(np.nanmean(
+                [c.get("post_ece", np.nan) for c in cal_records]
+            ))
+        return summary

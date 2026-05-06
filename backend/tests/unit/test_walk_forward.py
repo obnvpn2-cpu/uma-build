@@ -102,3 +102,103 @@ def test_walk_forward_binary(synthetic_data: pd.DataFrame):
     assert result.get("error") is None
     assert len(result["predictions_df"]) > 0
     assert "logloss_mean" in result["cv_metrics"]
+    # Binary path now also surfaces classification metrics in cv summary.
+    for key in ("auc_mean", "brier_mean", "ece_mean"):
+        assert key in result["cv_metrics"]
+
+
+def test_walk_forward_binary_with_calibration_fits_calibrator(
+    synthetic_data: pd.DataFrame,
+):
+    """When calibration_method is set, each fold fits an isotonic calibrator."""
+    feature_cols = ["distance", "field_size", "age", "horse_win_rate", "horse_avg_finish"]
+    # The fixture has ~1200 rows / 3 folds → ~400-row train per fold.
+    # 20% holdout ≈ 80 rows, so set the min low enough to actually fit.
+    config = TrainConfig(
+        objective_type="binary",
+        num_boost_round=30,
+        calibration_method="isotonic",
+        calibration_min_holdout_rows=20,
+    )
+
+    result = walk_forward_cv(
+        df=synthetic_data,
+        feature_cols=feature_cols,
+        config=config,
+        n_folds=3,
+    )
+
+    assert result.get("error") is None
+    # Predictions are calibrated probabilities in [0, 1].
+    preds = result["predictions_df"]["pred_prob"].values
+    assert preds.min() >= 0.0 and preds.max() <= 1.0
+    # cv_metrics should include calibration aggregate keys.
+    cv = result["cv_metrics"]
+    assert cv.get("calibration_method") == "isotonic"
+    assert "calibration_post_brier_mean" in cv
+    # Holdout-side post Brier should be ≤ pre Brier (deterministic on fit data).
+    assert cv["calibration_post_brier_mean"] <= cv["calibration_pre_brier_mean"] + 1e-9
+
+
+def test_walk_forward_calibration_skipped_when_holdout_too_small(
+    synthetic_data: pd.DataFrame,
+):
+    """Holdout below min → no calibrator fit, no calibration keys in cv_metrics."""
+    feature_cols = ["distance", "field_size", "age", "horse_win_rate", "horse_avg_finish"]
+    config = TrainConfig(
+        objective_type="binary",
+        num_boost_round=30,
+        calibration_method="isotonic",
+        calibration_min_holdout_rows=10_000,  # deliberately too high
+    )
+
+    result = walk_forward_cv(
+        df=synthetic_data,
+        feature_cols=feature_cols,
+        config=config,
+        n_folds=3,
+    )
+
+    assert result.get("error") is None
+    # No fold fit a calibrator → no calibration_method aggregate.
+    assert "calibration_method" not in result["cv_metrics"]
+    # No fold-level calibration record either.
+    assert all("calibration" not in fm for fm in result["fold_metrics"])
+
+
+def test_walk_forward_rejects_non_monotonic_race_date():
+    """Unparseable race_date must trip the time-series invariant assert.
+
+    We use string race_date so a lex-sortable but unparseable entry slips
+    past sort_values yet produces a NaT under to_datetime(errors="coerce"),
+    breaking monotonicity.
+    """
+    rng = np.random.RandomState(0)
+    rows = []
+    for i in range(40):
+        date_str = (pd.Timestamp("2023-01-01") + pd.Timedelta(days=i)).strftime("%Y-%m-%d")
+        if i == 5:
+            # Lex-sorts before "2023-..." so it lands at index 0 post-sort,
+            # then to_datetime yields NaT which breaks is_monotonic_increasing.
+            date_str = "0000-00-00"
+        rows.append({
+            "race_key": f"R{i:04d}",
+            "race_date": date_str,
+            "distance": 1600,
+            "field_size": 10,
+            "horse_win_rate": rng.rand(),
+            "horse_avg_finish": rng.rand() * 5,
+            "finish_order": 1,
+            "target_win": 1,
+            "horse_key": f"H{i:04d}",
+            "win_odds": 5.0,
+        })
+    df = pd.DataFrame(rows)
+
+    with pytest.raises(AssertionError, match="monotonically"):
+        walk_forward_cv(
+            df=df,
+            feature_cols=["distance", "field_size", "horse_win_rate", "horse_avg_finish"],
+            config=TrainConfig(objective_type="binary", num_boost_round=10),
+            n_folds=3,
+        )

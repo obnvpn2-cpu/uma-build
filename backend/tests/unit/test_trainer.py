@@ -80,3 +80,52 @@ def test_run_training_includes_cv_metrics():
     cached = get_cached_results(model_id)
     assert cached is not None
     assert "cv_metrics" in cached
+
+
+@pytest.mark.slow
+def test_run_training_free_user_binary_request_falls_back():
+    """Free user requesting binary+calibration → silent fallback to lambdarank,
+    binary_classifier surfaces in locked_features."""
+    from services.feature_catalog import get_default_feature_ids
+
+    features = get_default_feature_ids()[:5]
+    result = run_training(
+        selected_feature_ids=features,
+        is_pro=False,
+        objective="binary",
+        calibration=True,
+    )
+
+    assert result.get("is_pro") is False
+    locked_ids = {f["id"] for f in result.get("locked_features", [])}
+    assert "binary_classifier" in locked_ids
+    # Fallback ran lambdarank, so the cached pre-mask cv_metrics must
+    # carry ndcg keys (lambdarank), not auc/brier (binary).
+    cached = get_cached_results(result["model_id"])
+    assert cached is not None
+    assert "ndcg1_mean" in cached["cv_metrics"]
+
+
+@pytest.mark.slow
+def test_run_training_pro_binary_path_uses_binary_objective():
+    """Pro user requesting binary objective trains a binary classifier and
+    surfaces classification metrics (auc/brier/ece) in cv_metrics."""
+    from services.feature_catalog import get_default_feature_ids
+
+    features = get_default_feature_ids()[:5]
+    result = run_training(
+        selected_feature_ids=features,
+        is_pro=True,
+        objective="binary",
+        calibration=False,
+    )
+
+    # No binary_classifier in locked_features for Pro.
+    locked_ids = {f["id"] for f in result.get("locked_features", [])}
+    assert "binary_classifier" not in locked_ids
+    cached = get_cached_results(result["model_id"])
+    assert cached is not None
+    cv = cached["cv_metrics"]
+    # Binary path: auc/brier/ece keys present; ndcg keys absent.
+    assert "auc_mean" in cv and "brier_mean" in cv and "ece_mean" in cv
+    assert "ndcg1_mean" not in cv

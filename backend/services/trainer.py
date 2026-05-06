@@ -75,6 +75,8 @@ def run_training(
     db_path: str = DEFAULT_DB_PATH,
     is_pro: bool = False,
     user_id: Optional[str] = None,
+    objective: str = "lambdarank",
+    calibration: bool = False,
 ) -> Dict[str, Any]:
     """Orchestrate the full training pipeline.
 
@@ -90,6 +92,11 @@ def run_training(
         db_path: Path to the JRA-VAN database.
         is_pro: Whether the user has a Pro subscription.
         user_id: Authenticated user ID (for first-unlock tracking).
+        objective: ``"lambdarank"`` or ``"binary"``. Pro-only — for
+            non-Pro requests we silently fall back to ``"lambdarank"``
+            and surface ``binary_classifier`` in ``locked_features``.
+        calibration: Isotonic probability calibration. Requires Pro and
+            ``objective="binary"``. Silently dropped for non-Pro.
 
     Returns:
         Dict with training results (masked based on plan).
@@ -97,9 +104,32 @@ def run_training(
     start_time = time.time()
 
     data_years = 5 if is_pro else 2
+
+    # Pro-gate the binary classifier + calibration. Free callers that
+    # request these get lambdarank instead, with a hint in locked_features
+    # (added later in mask_results). Avoid 403: a degraded result is more
+    # useful than a hard error and keeps the paywall UX consistent with
+    # other masked features.
+    requested_objective = objective
+    requested_calibration = calibration
+    binary_locked_for_free = False
+    if not is_pro and (objective == "binary" or calibration):
+        logger.info(
+            "Free user requested objective=%s calibration=%s — falling "
+            "back to lambdarank (Pro-only).",
+            requested_objective, requested_calibration,
+        )
+        objective = "lambdarank"
+        calibration = False
+        binary_locked_for_free = True
+
     logger.info(
-        "Starting training: %d features, %d years (is_pro=%s)",
+        "Starting training: %d features, %d years (is_pro=%s, "
+        "requested_objective=%s, effective_objective=%s, "
+        "requested_calibration=%s, effective_calibration=%s)",
         len(selected_feature_ids), data_years, is_pro,
+        requested_objective, objective,
+        requested_calibration, calibration,
     )
 
     # 2. Run quick training
@@ -107,6 +137,8 @@ def run_training(
         selected_features=selected_feature_ids,
         db_path=db_path,
         data_years=data_years,
+        objective=objective,
+        calibration=calibration,
     )
 
     if train_result.get("error"):
@@ -181,7 +213,12 @@ def run_training(
             mark_first_unlock_used(user_id, model_id)
 
     # Apply paywall masking based on subscription status
-    masked_results = mask_results(full_results, is_pro=is_pro, is_first_unlock=is_first_unlock)
+    masked_results = mask_results(
+        full_results,
+        is_pro=is_pro,
+        is_first_unlock=is_first_unlock,
+        binary_locked=binary_locked_for_free,
+    )
 
     logger.info(
         "Training pipeline complete: model_id=%s, elapsed=%.1fs, roi=%.2f%%, first_unlock=%s",
