@@ -285,6 +285,95 @@ def passthrough_calibrated(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def kelly_fraction(
+    p: pd.Series, odds: pd.Series, cap: float = 0.25
+) -> pd.Series:
+    """Optimal naive Kelly fraction per row, clipped to [0, cap].
+
+    For decimal odds o and win prob p, the single-bet Kelly is
+    f* = (p*o - 1) / (o - 1) when EV > 0 else 0. We clip to ``cap``
+    (default 0.25 = quarter Kelly) to limit drawdown from
+    ill-calibrated probabilities — full Kelly has zero margin for
+    error, while quarter Kelly empirically gives smoother growth.
+
+    Returns 0 for rows where:
+      - odds <= 1 (degenerate, no payout)
+      - p or odds is NaN (missing input)
+      - EV is non-positive (negative or zero edge)
+
+    **Caveat: this is per-row independent Kelly, NOT race-portfolio
+    Kelly.** When a strategy selects multiple horses per race (e.g.
+    T2-T8, E1-E8), the events are mutually exclusive but
+    `kelly_fraction` treats each row independently, so Σf within a
+    race can exceed the optimal joint allocation. Correct treatment
+    requires solving the simultaneous-event Kelly problem
+    (Smoczynski-Tomkins). For exploratory ROI comparison this is
+    acceptable, but DO NOT scale to a real bankroll without fixing.
+    """
+    p = p.fillna(0).clip(0, 1)
+    odds = odds.fillna(0)
+    f_raw = (p * odds - 1) / (odds - 1)
+    f = f_raw.where(odds > 1, 0).fillna(0).clip(lower=0).clip(upper=cap)
+    return f
+
+
+def evaluate_strategy_kelly(
+    df: pd.DataFrame,
+    name: str,
+    mask: pd.Series,
+    kelly_cap: float = 0.25,
+    odds_col: str = "tan_odds",
+    prob_col: str = "pred_prob_norm",
+    win_col: str = "actual_win",
+) -> dict:
+    """Kelly-sized bet ROI for rows where `mask` is True.
+
+    Stake per row = bankroll_unit * kelly_fraction(p, odds, cap).
+    Total stake = sum(kelly_fraction); total payout = sum(f * o * win).
+    ROI = (payout - stake) / stake.  This is **bankroll-weighted**, NOT
+    per-bet — it is the return per unit of capital deployed, not per
+    JPY100 bet. Comparing flat-ROI to Kelly-ROI requires understanding
+    the different denominators.
+
+    "Active bets" = rows with f > 0 (strategy includes them AND Kelly
+    deems them positive-EV). Inactive rows contribute 0 to numerator
+    and denominator — the strategy mask says "consider these" but
+    Kelly decides "actually place".
+
+    **Probability calibration matters.** Kelly uses the *absolute*
+    level of p, not just the ranking; if `pred_prob_norm` is from
+    `softmax_per_race` (lambdarank) it is uncalibrated and the
+    resulting fractions are mathematically meaningless. Callers
+    should pass `--use-calibrated` (binary + isotonic) or accept
+    that Kelly numbers from this run are descriptive, not
+    prescriptive. main() emits a warning when the lambdarank path
+    is run with Kelly.
+    """
+    bets = df.loc[mask].copy()
+    if len(bets) == 0:
+        return {"strategy": name, "n_bets": 0, "kelly_n_active": 0,
+                "kelly_avg_f": 0.0, "kelly_roi_pct": 0.0}
+    odds_clean = bets[odds_col].fillna(0).astype(float)
+    f = kelly_fraction(bets[prob_col], odds_clean, cap=kelly_cap)
+    stake_total = float(f.sum())
+    n_active = int((f > 0).sum())
+    if stake_total <= 0:
+        return {"strategy": name, "n_bets": len(bets),
+                "kelly_n_active": 0, "kelly_avg_f": 0.0,
+                "kelly_roi_pct": 0.0}
+    win = bets[win_col].fillna(0).astype(float)
+    payout = (f * odds_clean * win).sum()
+    roi = 100.0 * (payout - stake_total) / stake_total
+    avg_f = float(f[f > 0].mean()) if n_active > 0 else 0.0
+    return {
+        "strategy": name,
+        "n_bets": len(bets),
+        "kelly_n_active": n_active,
+        "kelly_avg_f": round(avg_f, 4),
+        "kelly_roi_pct": round(roi, 2),
+    }
+
+
 def evaluate_strategy(df: pd.DataFrame, name: str, mask: pd.Series,
                       odds_col: str = "tan_odds",
                       win_col: str = "actual_win") -> dict:
@@ -358,6 +447,13 @@ def main():
         "seed trains its own walk_forward_cv pass and pred_prob is "
         "averaged per (race_key, horse_key). Default '42' = single model.",
     )
+    parser.add_argument(
+        "--kelly-cap",
+        type=float,
+        default=0.25,
+        help="Kelly fraction cap (e.g., 0.25 = quarter Kelly). 1.0 = full "
+        "Kelly (high variance; use only with well-calibrated probs).",
+    )
     args = parser.parse_args()
     try:
         seeds_list = [int(s.strip()) for s in args.seeds.split(",") if s.strip()]
@@ -401,119 +497,130 @@ def main():
     df["rank_ev_tan"] = df.groupby("race_key")["ev_tan"].rank(
         ascending=False, method="first")
 
-    print("\n=== TANSHO strategies (JPY100/bet) ===")
-    tansho_results = [
-        evaluate_strategy(df, "T1: top-1 by pred (current)",
-                          df["rank_pred"] == 1),
-        evaluate_strategy(df, "T2: rank_pred<=2 AND tan_odds>=3",
-                          (df["rank_pred"] <= 2) & (df["tan_odds"] >= 3)),
-        evaluate_strategy(df, "T3: rank_pred<=2 AND tan_odds>=5",
-                          (df["rank_pred"] <= 2) & (df["tan_odds"] >= 5)),
-        evaluate_strategy(df, "T4: rank_pred<=3 AND tan_odds>=5",
-                          (df["rank_pred"] <= 3) & (df["tan_odds"] >= 5)),
-        evaluate_strategy(df, "T5: rank_pred<=3 AND tan_odds 5-15",
-                          (df["rank_pred"] <= 3)
-                          & (df["tan_odds"].between(5, 15))),
-        evaluate_strategy(df, "T6: rank_pred<=5 AND tan_odds 7-20",
-                          (df["rank_pred"] <= 5)
-                          & (df["tan_odds"].between(7, 20))),
-        evaluate_strategy(df, "T7: rank_pred<=3 AND tan_odds 5-30",
-                          (df["rank_pred"] <= 3)
-                          & (df["tan_odds"].between(5, 30))),
-        evaluate_strategy(df, "T8: rank_pred<=2 AND tan_odds 4-12",
-                          (df["rank_pred"] <= 2)
-                          & (df["tan_odds"].between(4, 12))),
+    # Strategy specs as (name, mask, odds_col, win_col) tuples.
+    # Each spec is evaluated twice: once with flat-bet (JPY100/bet) and
+    # once with Kelly-sized stakes capped at args.kelly_cap.
+    tansho_specs = [
+        ("T1: top-1 by pred (current)", df["rank_pred"] == 1, "tan_odds", "actual_win"),
+        ("T2: rank_pred<=2 AND tan_odds>=3",
+         (df["rank_pred"] <= 2) & (df["tan_odds"] >= 3), "tan_odds", "actual_win"),
+        ("T3: rank_pred<=2 AND tan_odds>=5",
+         (df["rank_pred"] <= 2) & (df["tan_odds"] >= 5), "tan_odds", "actual_win"),
+        ("T4: rank_pred<=3 AND tan_odds>=5",
+         (df["rank_pred"] <= 3) & (df["tan_odds"] >= 5), "tan_odds", "actual_win"),
+        ("T5: rank_pred<=3 AND tan_odds 5-15",
+         (df["rank_pred"] <= 3) & (df["tan_odds"].between(5, 15)),
+         "tan_odds", "actual_win"),
+        ("T6: rank_pred<=5 AND tan_odds 7-20",
+         (df["rank_pred"] <= 5) & (df["tan_odds"].between(7, 20)),
+         "tan_odds", "actual_win"),
+        ("T7: rank_pred<=3 AND tan_odds 5-30",
+         (df["rank_pred"] <= 3) & (df["tan_odds"].between(5, 30)),
+         "tan_odds", "actual_win"),
+        ("T8: rank_pred<=2 AND tan_odds 4-12",
+         (df["rank_pred"] <= 2) & (df["tan_odds"].between(4, 12)),
+         "tan_odds", "actual_win"),
+    ]
+    ev_specs = [
+        (f"E1{sfx}: ev_tan>=1.2 (any rank)", df["ev_tan"] >= 1.2,
+         "tan_odds", "actual_win"),
+        (f"E2{sfx}: ev_tan>=1.5 (any rank)", df["ev_tan"] >= 1.5,
+         "tan_odds", "actual_win"),
+        (f"E3{sfx}: ev_tan>=2.0 (any rank)", df["ev_tan"] >= 2.0,
+         "tan_odds", "actual_win"),
+        (f"E4{sfx}: rank 2-4 AND ev_tan>=1.2",
+         df["rank_pred"].between(2, 4) & (df["ev_tan"] >= 1.2),
+         "tan_odds", "actual_win"),
+        (f"E5{sfx}: rank 2-4 AND ev_tan>=1.5",
+         df["rank_pred"].between(2, 4) & (df["ev_tan"] >= 1.5),
+         "tan_odds", "actual_win"),
+        (f"E6{sfx}: rank 2-3 AND ev_tan>=1.0",
+         df["rank_pred"].between(2, 3) & (df["ev_tan"] >= 1.0),
+         "tan_odds", "actual_win"),
+        (f"E7{sfx}: rank 2-3 AND ev_tan>=1.3",
+         df["rank_pred"].between(2, 3) & (df["ev_tan"] >= 1.3),
+         "tan_odds", "actual_win"),
+        (f"E8{sfx}: rank>=2 AND rank_ev_tan==1",
+         (df["rank_pred"] >= 2) & (df["rank_ev_tan"] == 1),
+         "tan_odds", "actual_win"),
+    ]
+    ev_fuku_specs = [
+        ("EF1: ev_fuku>=1.0 AND rank<=3",
+         (df["ev_fuku"] >= 1.0) & (df["rank_pred"] <= 3),
+         "fuku_odds_low", "actual_in3"),
+        ("EF2: ev_fuku>=1.2 AND rank<=3",
+         (df["ev_fuku"] >= 1.2) & (df["rank_pred"] <= 3),
+         "fuku_odds_low", "actual_in3"),
+        ("EF3: rank 2-4 AND ev_fuku>=1.0",
+         df["rank_pred"].between(2, 4) & (df["ev_fuku"] >= 1.0),
+         "fuku_odds_low", "actual_in3"),
+        ("EF4: rank 2-3 AND ev_fuku>=1.0",
+         df["rank_pred"].between(2, 3) & (df["ev_fuku"] >= 1.0),
+         "fuku_odds_low", "actual_in3"),
+    ]
+    fukusho_specs = [
+        ("F1: top-1 by pred (place bet)", df["rank_pred"] == 1,
+         "fuku_odds_low", "actual_in3"),
+        ("F2: top-2 by pred (place bet)", df["rank_pred"] <= 2,
+         "fuku_odds_low", "actual_in3"),
+        ("F3: top-3 by pred (place bet)", df["rank_pred"] <= 3,
+         "fuku_odds_low", "actual_in3"),
+        ("F4: rank_pred<=2 AND fuku_low>=2",
+         (df["rank_pred"] <= 2) & (df["fuku_odds_low"] >= 2.0),
+         "fuku_odds_low", "actual_in3"),
+        ("F5: rank_pred<=3 AND fuku_low>=2",
+         (df["rank_pred"] <= 3) & (df["fuku_odds_low"] >= 2.0),
+         "fuku_odds_low", "actual_in3"),
+        ("F6: rank_pred<=3 AND fuku_low>=3",
+         (df["rank_pred"] <= 3) & (df["fuku_odds_low"] >= 3.0),
+         "fuku_odds_low", "actual_in3"),
+        ("F7: rank_pred<=5 AND fuku_low 2-10",
+         (df["rank_pred"] <= 5) & (df["fuku_odds_low"].between(2, 10)),
+         "fuku_odds_low", "actual_in3"),
     ]
 
-    out = pd.DataFrame(tansho_results)
-    print(out.to_string(index=False))
+    def _run_specs(specs):
+        flat = [evaluate_strategy(df, n, m, odds_col=oc, win_col=wc)
+                for (n, m, oc, wc) in specs]
+        kelly = [evaluate_strategy_kelly(
+            df, n, m, kelly_cap=args.kelly_cap,
+            odds_col=oc, win_col=wc)
+            for (n, m, oc, wc) in specs]
+        return flat, kelly
+
+    print("\n=== TANSHO strategies (JPY100/bet) ===")
+    tansho_results, tansho_kelly = _run_specs(tansho_specs)
+    print(pd.DataFrame(tansho_results).to_string(index=False))
 
     print("\n=== EV-filtered TANSHO strategies (find mid-prob high-EV) ===")
     # rank_pred is rank by raw lambdarank score → use as proxy for "predicted strength"
     # ev_tan = pred_prob_norm * tan_odds → only meaningful as relative ranking
     # The user's hypothesis: "予測勝率は悪くないのに期待値高い馬" = mid-rank + high-EV
-    ev_results = [
-        evaluate_strategy(df, f"E1{sfx}: ev_tan>=1.2 (any rank)",
-                          df["ev_tan"] >= 1.2),
-        evaluate_strategy(df, f"E2{sfx}: ev_tan>=1.5 (any rank)",
-                          df["ev_tan"] >= 1.5),
-        evaluate_strategy(df, f"E3{sfx}: ev_tan>=2.0 (any rank)",
-                          df["ev_tan"] >= 2.0),
-        # Mid-rank + high-EV (the user's "穴馬じゃないけど期待値高い"):
-        evaluate_strategy(df, f"E4{sfx}: rank 2-4 AND ev_tan>=1.2",
-                          (df["rank_pred"].between(2, 4)) & (df["ev_tan"] >= 1.2)),
-        evaluate_strategy(df, f"E5{sfx}: rank 2-4 AND ev_tan>=1.5",
-                          (df["rank_pred"].between(2, 4)) & (df["ev_tan"] >= 1.5)),
-        evaluate_strategy(df, f"E6{sfx}: rank 2-3 AND ev_tan>=1.0",
-                          (df["rank_pred"].between(2, 3)) & (df["ev_tan"] >= 1.0)),
-        evaluate_strategy(df, f"E7{sfx}: rank 2-3 AND ev_tan>=1.3",
-                          (df["rank_pred"].between(2, 3)) & (df["ev_tan"] >= 1.3)),
-        # Anti-favorite: skip top-1, take next ev_tan winner
-        evaluate_strategy(df, f"E8{sfx}: rank>=2 AND rank_ev_tan==1",
-                          (df["rank_pred"] >= 2) & (df["rank_ev_tan"] == 1)),
-    ]
-    out_ev = pd.DataFrame(ev_results)
-    print(out_ev.to_string(index=False))
+    ev_results, ev_kelly = _run_specs(ev_specs)
+    print(pd.DataFrame(ev_results).to_string(index=False))
 
     print("\n=== EV-filtered FUKUSHO strategies ===")
-    ev_fuku_results = [
-        evaluate_strategy(df, "EF1: ev_fuku>=1.0 AND rank<=3",
-                          (df["ev_fuku"] >= 1.0) & (df["rank_pred"] <= 3),
-                          odds_col="fuku_odds_low",
-                          win_col="actual_in3"),
-        evaluate_strategy(df, "EF2: ev_fuku>=1.2 AND rank<=3",
-                          (df["ev_fuku"] >= 1.2) & (df["rank_pred"] <= 3),
-                          odds_col="fuku_odds_low",
-                          win_col="actual_in3"),
-        evaluate_strategy(df, "EF3: rank 2-4 AND ev_fuku>=1.0",
-                          (df["rank_pred"].between(2, 4)) & (df["ev_fuku"] >= 1.0),
-                          odds_col="fuku_odds_low",
-                          win_col="actual_in3"),
-        evaluate_strategy(df, "EF4: rank 2-3 AND ev_fuku>=1.0",
-                          (df["rank_pred"].between(2, 3)) & (df["ev_fuku"] >= 1.0),
-                          odds_col="fuku_odds_low",
-                          win_col="actual_in3"),
-    ]
-    out_ev_fuku = pd.DataFrame(ev_fuku_results)
-    print(out_ev_fuku.to_string(index=False))
+    ev_fuku_results, ev_fuku_kelly = _run_specs(ev_fuku_specs)
+    print(pd.DataFrame(ev_fuku_results).to_string(index=False))
 
     print("\n=== FUKUSHO strategies (JPY100/bet, conservative payout=fuku_odds_low) ===")
-    fukusho_results = [
-        evaluate_strategy(df, "F1: top-1 by pred (place bet)",
-                          df["rank_pred"] == 1,
-                          odds_col="fuku_odds_low",
-                          win_col="actual_in3"),
-        evaluate_strategy(df, "F2: top-2 by pred (place bet)",
-                          df["rank_pred"] <= 2,
-                          odds_col="fuku_odds_low",
-                          win_col="actual_in3"),
-        evaluate_strategy(df, "F3: top-3 by pred (place bet)",
-                          df["rank_pred"] <= 3,
-                          odds_col="fuku_odds_low",
-                          win_col="actual_in3"),
-        evaluate_strategy(df, "F4: rank_pred<=2 AND fuku_low>=2",
-                          (df["rank_pred"] <= 2)
-                          & (df["fuku_odds_low"] >= 2.0),
-                          odds_col="fuku_odds_low",
-                          win_col="actual_in3"),
-        evaluate_strategy(df, "F5: rank_pred<=3 AND fuku_low>=2",
-                          (df["rank_pred"] <= 3)
-                          & (df["fuku_odds_low"] >= 2.0),
-                          odds_col="fuku_odds_low",
-                          win_col="actual_in3"),
-        evaluate_strategy(df, "F6: rank_pred<=3 AND fuku_low>=3",
-                          (df["rank_pred"] <= 3)
-                          & (df["fuku_odds_low"] >= 3.0),
-                          odds_col="fuku_odds_low",
-                          win_col="actual_in3"),
-        evaluate_strategy(df, "F7: rank_pred<=5 AND fuku_low 2-10",
-                          (df["rank_pred"] <= 5)
-                          & (df["fuku_odds_low"].between(2, 10)),
-                          odds_col="fuku_odds_low",
-                          win_col="actual_in3"),
-    ]
-    out2 = pd.DataFrame(fukusho_results)
-    print(out2.to_string(index=False))
+    fukusho_results, fukusho_kelly = _run_specs(fukusho_specs)
+    print(pd.DataFrame(fukusho_results).to_string(index=False))
+
+    print(f"\n=== Kelly-sized stakes (cap={args.kelly_cap}) ===")
+    print("ROI is per-unit-staked (bankroll-weighted), not per-bet")
+    if not args.use_calibrated:
+        print("WARNING: --use-calibrated is OFF. pred_prob_norm comes from "
+              "lambdarank+softmax (uncalibrated). Kelly fractions below "
+              "are mathematically dubious — interpret as descriptive only.")
+    print("\n--- TANSHO Kelly ---")
+    print(pd.DataFrame(tansho_kelly).to_string(index=False))
+    print("\n--- EV-filtered TANSHO Kelly ---")
+    print(pd.DataFrame(ev_kelly).to_string(index=False))
+    print("\n--- EV-filtered FUKUSHO Kelly ---")
+    print(pd.DataFrame(ev_fuku_kelly).to_string(index=False))
+    print("\n--- FUKUSHO Kelly ---")
+    print(pd.DataFrame(fukusho_kelly).to_string(index=False))
 
     print("\n=== Key context ===")
     print(f"Total predictions with odds: {df['tan_odds'].notna().sum()}")
@@ -541,6 +648,11 @@ def main():
             "ev_tansho": ev_results,
             "ev_fukusho": ev_fuku_results,
             "fukusho": fukusho_results,
+            "kelly_cap": args.kelly_cap,
+            "tansho_kelly": tansho_kelly,
+            "ev_tansho_kelly": ev_kelly,
+            "ev_fukusho_kelly": ev_fuku_kelly,
+            "fukusho_kelly": fukusho_kelly,
         }
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2, default=str)
