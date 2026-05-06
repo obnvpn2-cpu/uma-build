@@ -74,6 +74,7 @@ def _resolve_features(mode: str) -> list[str]:
 def load_predictions(
     use_calibrated: bool = False,
     features_mode: str = "small",
+    per_size_calibration: bool = False,
 ) -> tuple[pd.DataFrame, dict]:
     """Run walk_forward_cv and return (predictions_df, cv_metrics).
 
@@ -82,6 +83,9 @@ def load_predictions(
     in [0, 1] (no per-race softmax needed downstream).
     ``features_mode``: "small" (original 11-ish set) or "default"
     (catalog default ~34 IDs).
+    ``per_size_calibration``: when True (and use_calibrated), swap the
+    single global isotonic for one-per-field-size-bucket
+    (8-12 / 13-16 / 17-18 head). field_size 列が cache に必要。
     """
     df = pd.read_parquet(PARQUET, engine="pyarrow")
     # `select_columns` resolves selected feature IDs to column names via
@@ -93,14 +97,26 @@ def load_predictions(
     df = df.sort_values(["race_date", "race_key"]).reset_index(drop=True)
 
     if use_calibrated:
-        config = TrainConfig(
-            objective_type="binary",
-            calibration_method="isotonic",
-            calibration_min_holdout_rows=5000,
-            num_boost_round=300,
-            early_stopping_rounds=30,
-        )
-        print("Mode: BINARY + isotonic calibration (calibrated probability)")
+        kwargs: dict = {
+            "objective_type": "binary",
+            "calibration_method": "isotonic",
+            "calibration_min_holdout_rows": 5000,
+            "num_boost_round": 300,
+            "early_stopping_rounds": 30,
+        }
+        if per_size_calibration:
+            if "field_size" not in df.columns:
+                raise SystemExit(
+                    "per_size_calibration requested but feature cache lacks "
+                    "field_size column"
+                )
+            kwargs["calibration_size_col"] = "field_size"
+            kwargs["calibration_size_bins"] = [[1, 12], [13, 16], [17, 18]]
+            kwargs["calibration_per_size_min_rows"] = 500
+            print("Mode: BINARY + isotonic per field_size bucket (8-12 / 13-16 / 17-18)")
+        else:
+            print("Mode: BINARY + isotonic calibration (calibrated probability)")
+        config = TrainConfig(**kwargs)
     else:
         config = TrainConfig(num_boost_round=300, early_stopping_rounds=30)
         print("Mode: LAMBDARANK (rank score, requires per-race softmax)")
@@ -228,6 +244,12 @@ def main():
         help="Feature preset: 'small' (~11 from first-round exploration) "
         "or 'default' (catalog default ~34, no odds-derived leak risk)",
     )
+    parser.add_argument(
+        "--per-size-calibration",
+        action="store_true",
+        help="Use one isotonic per field_size bucket (8-12 / 13-16 / "
+        "17-18). Requires --use-calibrated and field_size in cache.",
+    )
     args = parser.parse_args()
 
     print(f"DB:     {DB_PATH}")
@@ -236,6 +258,7 @@ def main():
     preds, cv_metrics = load_predictions(
         use_calibrated=args.use_calibrated,
         features_mode=args.features,
+        per_size_calibration=args.per_size_calibration,
     )
     df = join_predictions_with_odds(preds)
     if args.use_calibrated:
