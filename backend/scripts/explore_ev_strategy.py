@@ -38,6 +38,10 @@ from ml.feature_selector import filter_available_columns, select_columns  # noqa
 from ml.pipeline import TrainConfig  # noqa: E402
 from ml.walk_forward import walk_forward_cv  # noqa: E402
 from services.feature_catalog import get_default_feature_ids  # noqa: E402
+from services.odds_features import (  # noqa: E402
+    ODDS_DERIVED_COLUMNS,
+    add_odds_derived_features,
+)
 
 DB_PATH = ROOT / "data" / "jravan.db"
 PARQUET = ROOT / "data" / "feature_table_cache.parquet"
@@ -75,6 +79,7 @@ def load_predictions(
     use_calibrated: bool = False,
     features_mode: str = "small",
     per_size_calibration: bool = False,
+    with_odds_aware: bool = False,
 ) -> tuple[pd.DataFrame, dict]:
     """Run walk_forward_cv and return (predictions_df, cv_metrics).
 
@@ -86,6 +91,11 @@ def load_predictions(
     ``per_size_calibration``: when True (and use_calibrated), swap the
     single global isotonic for one-per-field-size-bucket
     (8-12 / 13-16 / 17-18 head). field_size 列が cache に必要。
+    ``with_odds_aware``: append log_win_odds / implied_prob / per-race
+    log-odds gaps / fuku spread to the feature set. Filters cache to
+    races where every horse has nonzero `win_odds` (~17K of ~29K races).
+    Popularity is *not* added — the goal is partial market info, not
+    rank leakage.
     """
     df = pd.read_parquet(PARQUET, engine="pyarrow")
     # `select_columns` resolves selected feature IDs to column names via
@@ -93,6 +103,18 @@ def load_predictions(
     selected = _resolve_features(features_mode)
     feature_cols = select_columns(selected)
     feature_cols = filter_available_columns(feature_cols, df)
+
+    if with_odds_aware:
+        # Drop races where any horse has missing odds (sentinel 0).
+        valid_min = df.groupby("race_key")["win_odds"].transform("min")
+        before = df["race_key"].nunique()
+        df = df[valid_min > 0].copy()
+        after = df["race_key"].nunique()
+        print(f"odds-aware: filtered races with missing odds: {before} → {after}")
+        df = add_odds_derived_features(df)
+        added = [c for c in ODDS_DERIVED_COLUMNS if c in df.columns]
+        feature_cols = list(dict.fromkeys(feature_cols + added))
+        print(f"odds-aware: appended derived features {added}")
     print(f"Using {len(feature_cols)} features: {feature_cols[:8]}...")
     df = df.sort_values(["race_date", "race_key"]).reset_index(drop=True)
 
@@ -250,6 +272,13 @@ def main():
         help="Use one isotonic per field_size bucket (8-12 / 13-16 / "
         "17-18). Requires --use-calibrated and field_size in cache.",
     )
+    parser.add_argument(
+        "--with-odds-aware",
+        action="store_true",
+        help="Append odds-derived features (log_win_odds, implied_prob, "
+        "log_odds_gap_to_fav/mean, fuku_odds_uncertainty). Filters cache "
+        "to races with valid odds (~17K of ~29K). Popularity is NOT added.",
+    )
     args = parser.parse_args()
 
     print(f"DB:     {DB_PATH}")
@@ -259,6 +288,7 @@ def main():
         use_calibrated=args.use_calibrated,
         features_mode=args.features,
         per_size_calibration=args.per_size_calibration,
+        with_odds_aware=args.with_odds_aware,
     )
     df = join_predictions_with_odds(preds)
     if args.use_calibrated:
@@ -410,6 +440,9 @@ def main():
         payload = {
             "mode": "calibrated_binary" if args.use_calibrated else "lambdarank_softmax",
             "calibration_method": "isotonic" if args.use_calibrated else None,
+            "features_mode": args.features,
+            "per_size_calibration": bool(args.per_size_calibration),
+            "with_odds_aware": bool(args.with_odds_aware),
             "cv_metrics": cv_metrics,
             "n_predictions": int(len(df)),
             "n_with_odds": int(df["tan_odds"].notna().sum()),
