@@ -10,7 +10,7 @@ interface AuthModalProps {
   onClose: () => void;
 }
 
-type Mode = "login" | "signup";
+type Mode = "login" | "signup" | "reset";
 
 export function AuthModal({ isOpen, onClose }: AuthModalProps) {
   const [mode, setMode] = useState<Mode>("login");
@@ -19,8 +19,9 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [signupSuccess, setSignupSuccess] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
 
-  const { signInWithEmail, signUpWithEmail, signInWithGoogle } = useAuth();
+  const { signInWithEmail, signUpWithEmail, signInWithGoogle, resetPassword } = useAuth();
 
   // Reset state when modal opens
   useEffect(() => {
@@ -31,6 +32,7 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
       setError("");
       setLoading(false);
       setSignupSuccess(false);
+      setResetSent(false);
     }
   }, [isOpen]);
 
@@ -52,13 +54,22 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
           sendEvent("login", { method: "email" });
           onClose();
         }
-      } else {
+      } else if (mode === "signup") {
         const { error: err } = await signUpWithEmail(email, password);
         if (err) {
           setError(err.message);
         } else {
           sendEvent("signup", { method: "email" });
           setSignupSuccess(true);
+        }
+      } else {
+        // mode === "reset"
+        const { error: err } = await resetPassword(email);
+        if (err) {
+          setError(err.message);
+        } else {
+          sendEvent("password_reset_requested", { method: "email" });
+          setResetSent(true);
         }
       }
     } finally {
@@ -87,7 +98,11 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
         </button>
 
         <h2 className="font-mincho text-xl font-bold text-center mb-6">
-          {mode === "login" ? "ログイン" : "アカウント作成"}
+          {mode === "login"
+            ? "ログイン"
+            : mode === "signup"
+            ? "アカウント作成"
+            : "パスワードリセット"}
         </h2>
 
         {signupSuccess ? (
@@ -103,6 +118,52 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
               ログイン画面へ
             </button>
           </div>
+        ) : resetSent ? (
+          <div className="text-center space-y-4">
+            <div className="text-3xl">📧</div>
+            <p className="text-sm text-text-secondary">
+              パスワードリセット用のメールを送信しました。<br />
+              メール内のリンクから新しいパスワードを設定してください。
+            </p>
+            <button
+              onClick={() => { setResetSent(false); setMode("login"); }}
+              className="btn-primary px-6 py-2 rounded-lg text-sm cursor-pointer"
+            >
+              ログイン画面へ
+            </button>
+          </div>
+        ) : mode === "reset" ? (
+          <form onSubmit={handleSubmit} className="space-y-3">
+            <p className="text-xs text-text-secondary mb-3">
+              登録メールアドレスを入力してください。<br />
+              パスワード再設定用のリンクを送信します。
+            </p>
+            <input
+              type="email"
+              placeholder="メールアドレス"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              className="w-full glass-sm px-3 py-2 rounded-lg text-sm bg-transparent border border-white/10 focus:border-accent/50 focus:outline-none transition"
+            />
+            {error && <p className="text-xs text-danger">{error}</p>}
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full btn-primary py-2.5 rounded-lg text-sm font-medium"
+            >
+              {loading ? "送信中..." : "リセットメールを送信"}
+            </button>
+            <p className="text-xs text-text-muted text-center">
+              <button
+                type="button"
+                onClick={() => { setMode("login"); setError(""); }}
+                className="text-accent hover:underline cursor-pointer"
+              >
+                ログイン画面に戻る
+              </button>
+            </p>
+          </form>
         ) : (
           <>
             {/* Google OAuth */}
@@ -172,6 +233,18 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
                   ? "ログイン"
                   : "アカウント作成"}
               </button>
+
+              {mode === "login" && (
+                <p className="text-xs text-text-muted text-right">
+                  <button
+                    type="button"
+                    onClick={() => { setMode("reset"); setError(""); setPassword(""); }}
+                    className="text-accent hover:underline cursor-pointer"
+                  >
+                    パスワードを忘れた方
+                  </button>
+                </p>
+              )}
             </form>
 
             <p className="text-xs text-text-muted text-center mt-4">
