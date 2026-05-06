@@ -179,6 +179,31 @@ def load_predictions(
         )
         cv_metrics = dict(first_metrics or {})
         cv_metrics["ensemble"] = {"n_seeds": len(seeds_list), "seeds": seeds_list}
+        # Recompute brier/auc/ece on the *ensemble* predictions.
+        # First-seed metrics alone hide the bagging gain on extremes.
+        if "target_win" in predictions_df.columns:
+            from ml.pipeline import _eval_classification_metrics
+            ensemble_metrics = _eval_classification_metrics(
+                predictions_df["target_win"].values.astype(int),
+                predictions_df["pred_prob"].values.astype(float),
+            )
+            cv_metrics["ensemble"]["pred_prob_brier"] = float(
+                ensemble_metrics.get("val_brier", float("nan"))
+            )
+            cv_metrics["ensemble"]["pred_prob_auc"] = float(
+                ensemble_metrics.get("val_auc", float("nan"))
+            )
+            cv_metrics["ensemble"]["pred_prob_ece"] = float(
+                ensemble_metrics.get("val_ece", float("nan"))
+            )
+            cv_metrics["ensemble"]["pred_prob_logloss"] = float(
+                ensemble_metrics.get("val_logloss", float("nan"))
+            )
+            print(
+                f"Ensemble metrics: AUC={cv_metrics['ensemble']['pred_prob_auc']:.4f} "
+                f"Brier={cv_metrics['ensemble']['pred_prob_brier']:.4f} "
+                f"ECE={cv_metrics['ensemble']['pred_prob_ece']:.4f}"
+            )
     else:
         config = TrainConfig(**{**kwargs, "seed": seeds_list[0]})
         cv = walk_forward_cv(df, feature_cols, config=config, n_folds=3)
