@@ -36,12 +36,15 @@ sys.path.insert(0, str(ROOT))
 from ml.feature_selector import filter_available_columns, select_columns  # noqa: E402
 from ml.pipeline import TrainConfig  # noqa: E402
 from ml.walk_forward import walk_forward_cv  # noqa: E402
+from services.feature_catalog import get_default_feature_ids  # noqa: E402
 
 DB_PATH = ROOT / "data" / "jravan.db"
 PARQUET = ROOT / "data" / "feature_table_cache.parquet"
 
-# Reasonably strong default feature set (mix of horse, jockey, course)
-SELECTED_FEATURES = [
+# Original "small" set (~11 features after filtering). Kept for parity
+# with the first round of EV exploration. New runs default to "default"
+# (catalog get_default_feature_ids — 34 IDs, no odds-derived leaks).
+SMALL_FEATURES = [
     "popularity",        # 人気順位
     "win_odds_estimate",  # might be missing
     "horse_win_rate",
@@ -59,17 +62,31 @@ SELECTED_FEATURES = [
 ]
 
 
-def load_predictions(use_calibrated: bool = False) -> tuple[pd.DataFrame, dict]:
+def _resolve_features(mode: str) -> list[str]:
+    if mode == "small":
+        return SMALL_FEATURES
+    if mode == "default":
+        return get_default_feature_ids()
+    raise ValueError(f"Unknown features mode: {mode}")
+
+
+def load_predictions(
+    use_calibrated: bool = False,
+    features_mode: str = "small",
+) -> tuple[pd.DataFrame, dict]:
     """Run walk_forward_cv and return (predictions_df, cv_metrics).
 
     When ``use_calibrated`` is True, swaps lambdarank for binary +
     isotonic calibration so ``pred_prob`` is a calibrated probability
     in [0, 1] (no per-race softmax needed downstream).
+    ``features_mode``: "small" (original 11-ish set) or "default"
+    (catalog default ~34 IDs).
     """
     df = pd.read_parquet(PARQUET, engine="pyarrow")
     # `select_columns` resolves selected feature IDs to column names via
     # the catalog, then filter_available_columns drops missing/sparse ones.
-    feature_cols = select_columns(SELECTED_FEATURES)
+    selected = _resolve_features(features_mode)
+    feature_cols = select_columns(selected)
     feature_cols = filter_available_columns(feature_cols, df)
     print(f"Using {len(feature_cols)} features: {feature_cols[:8]}...")
     df = df.sort_values(["race_date", "race_key"]).reset_index(drop=True)
@@ -197,12 +214,23 @@ def main():
         default=None,
         help="Path to write strategy results JSON for compare_ev_strategies.py",
     )
+    parser.add_argument(
+        "--features",
+        type=str,
+        default="small",
+        choices=("small", "default"),
+        help="Feature preset: 'small' (~11 from first-round exploration) "
+        "or 'default' (catalog default ~34, no odds-derived leak risk)",
+    )
     args = parser.parse_args()
 
     print(f"DB:     {DB_PATH}")
     print(f"Cache:  {PARQUET}\n")
 
-    preds, cv_metrics = load_predictions(use_calibrated=args.use_calibrated)
+    preds, cv_metrics = load_predictions(
+        use_calibrated=args.use_calibrated,
+        features_mode=args.features,
+    )
     df = join_predictions_with_odds(preds)
     if args.use_calibrated:
         df = passthrough_calibrated(df)
