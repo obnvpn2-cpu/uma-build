@@ -9,7 +9,7 @@ import os
 import pickle
 import uuid
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import lightgbm as lgb
 import numpy as np
@@ -68,6 +68,10 @@ class TrainConfig:
     # inference time. Bins that fall under
     # ``calibration_per_size_min_rows`` are not fit; rows that hit them
     # use the global fallback isotonic. None disables grouping.
+    # Note: bins are stored as List[List[int]] (not List[Tuple[int,int]])
+    # so the dataclass is JSON-serializable for pickle save/load and so
+    # callers can pass plain literals like [[1,12],[13,16]]. Internally
+    # _fit_calibrator coerces each pair to a tuple at fit time.
     calibration_size_col: Optional[str] = None
     calibration_size_bins: Optional[List[List[int]]] = None
     calibration_per_size_min_rows: int = 500
@@ -311,7 +315,7 @@ class LGBMPipeline:
                 [1, 12], [13, 16], [17, 18],
             ]
             cal = _GroupedIsotonic(
-                bins=[(int(lo), int(hi)) for lo, hi in bins],
+                bins=bins,
                 min_rows=self.config.calibration_per_size_min_rows,
             )
             cal.fit(np.asarray(raw_scores), np.asarray(y_true), np.asarray(groups))
@@ -573,18 +577,29 @@ class _GroupedIsotonic:
     bin) fall back to the global isotonic fit on all rows.
     """
 
-    def __init__(self, bins: List[tuple], min_rows: int = 500) -> None:
-        self.bins: List[tuple] = list(bins)
-        self.min_rows: int = int(min_rows)
+    UNMAPPED_WARN_FRAC = 0.05  # warn if >5% of rows fall outside any bin
+
+    def __init__(
+        self, bins: List[Tuple[int, int]], min_rows: int = 500,
+    ) -> None:
+        self.bins: List[Tuple[int, int]] = [
+            (int(lo), int(hi)) for lo, hi in bins
+        ]
+        self.min_rows: int = max(1, int(min_rows))
         self.calibrators: Dict[int, IsotonicRegression] = {}
         self.fallback: Optional[IsotonicRegression] = None
         self.bin_n: Dict[int, int] = {}
 
-    def _bin_idx(self, value: int) -> int:
+    def _bin_assign(self, groups: np.ndarray) -> np.ndarray:
+        """Vectorised bin lookup. Returns -1 for unmapped groups."""
+        groups_i = np.asarray(groups, dtype=np.int64)
+        out = np.full(groups_i.shape, -1, dtype=np.int64)
         for i, (lo, hi) in enumerate(self.bins):
-            if lo <= value <= hi:
-                return i
-        return -1
+            # First-match wins; bins are typically disjoint but we don't
+            # enforce it — fall back to the iteration order.
+            mask = (groups_i >= lo) & (groups_i <= hi) & (out == -1)
+            out[mask] = i
+        return out
 
     def fit(
         self,
@@ -598,7 +613,7 @@ class _GroupedIsotonic:
             out_of_bounds="clip", y_min=0.0, y_max=1.0,
         )
         self.fallback.fit(raw_scores, y_true)
-        bin_assign = np.array([self._bin_idx(int(g)) for g in groups])
+        bin_assign = self._bin_assign(groups)
         for i in range(len(self.bins)):
             mask = bin_assign == i
             n = int(mask.sum())
@@ -623,17 +638,28 @@ class _GroupedIsotonic:
             raise RuntimeError("_GroupedIsotonic.transform called before fit")
         raw_scores = np.asarray(raw_scores, dtype=float)
         out = np.empty_like(raw_scores, dtype=float)
-        bin_assign = np.array([self._bin_idx(int(g)) for g in groups])
-        for i, (lo, hi) in enumerate(self.bins):
+        bin_assign = self._bin_assign(groups)
+        for i, (_lo, _hi) in enumerate(self.bins):
             mask = bin_assign == i
             if not mask.any():
                 continue
             cal = self.calibrators.get(i, self.fallback)
             out[mask] = cal.transform(raw_scores[mask])
-        # Rows whose group fell outside every bin → fallback.
+        # Rows whose group fell outside every bin → fallback. Warn loudly
+        # when this is a non-trivial slice of inference traffic — silent
+        # degradation to global isotonic would otherwise hide a config
+        # mistake (wrong size_col / bins that don't cover prod data).
         unmapped = bin_assign == -1
         if unmapped.any():
             out[unmapped] = self.fallback.transform(raw_scores[unmapped])
+            unmapped_frac = float(unmapped.mean())
+            if unmapped_frac > self.UNMAPPED_WARN_FRAC:
+                logger.warning(
+                    "_GroupedIsotonic: %.1f%% of rows (%d/%d) fell outside "
+                    "every declared bin and used the global fallback. "
+                    "Check calibration_size_bins coverage.",
+                    100.0 * unmapped_frac, int(unmapped.sum()), len(out),
+                )
         return out
 
     def per_bin_metrics(
@@ -642,12 +668,17 @@ class _GroupedIsotonic:
         y_true: np.ndarray,
         groups: np.ndarray,
     ) -> Dict[str, Dict[str, float]]:
-        """Per-bin pre/post Brier+ECE on the holdout used to fit.
+        """Per-bin pre/post Brier+ECE on the holdout the calibrator fit.
 
-        Stored on calibration_metrics["per_bin"] for diagnostics — useful
-        to see which size buckets benefit (or are starved of data).
+        Stored on calibration_metrics["per_bin"] for diagnostics. Note
+        these are **in-sample** evaluations: each bin's IsotonicRegression
+        was fit on exactly the rows scored here, so post-Brier/ECE are
+        biased low (perfect monotone fits have train Brier ≤ val Brier).
+        Fair-vs-global comparison still holds because the global single-
+        isotonic path computes its post metrics the same in-sample way.
+        Treat per-bin numbers as relative health checks, not absolute.
         """
-        bin_assign = np.array([self._bin_idx(int(g)) for g in groups])
+        bin_assign = self._bin_assign(groups)
         per_bin: Dict[str, Dict[str, float]] = {}
         for i, (lo, hi) in enumerate(self.bins):
             mask = bin_assign == i

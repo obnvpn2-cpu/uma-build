@@ -371,6 +371,32 @@ def test_grouped_isotonic_transform_handles_unmapped_groups():
     assert 0.0 <= out[1] <= 1.0
 
 
+def test_grouped_isotonic_warns_on_high_unmapped_fraction(caplog):
+    """When >5% of transform rows fall outside bins, log a warning."""
+    rng = np.random.default_rng(3)
+    raw_fit = rng.uniform(0, 1, 1000)
+    groups_fit = np.full(1000, 14)
+    y_fit = (rng.uniform(0, 1, 1000) < 0.4 * raw_fit).astype(int)
+    cal = _GroupedIsotonic(bins=[(13, 16)], min_rows=500)
+    cal.fit(raw_fit, y_fit, groups_fit)
+    # 50% unmapped — should trip the warning.
+    raw_t = rng.uniform(0, 1, 100)
+    groups_t = np.array([14] * 50 + [99] * 50)
+    with caplog.at_level(logging.WARNING):
+        cal.transform(raw_t, groups_t)
+    assert any(
+        "fell outside every declared bin" in r.message for r in caplog.records
+    )
+
+
+def test_grouped_isotonic_min_rows_clamped_to_one():
+    """min_rows=0 or negative is clamped to 1 (don't fit on empty bins)."""
+    cal = _GroupedIsotonic(bins=[(1, 5)], min_rows=0)
+    assert cal.min_rows == 1
+    cal_neg = _GroupedIsotonic(bins=[(1, 5)], min_rows=-10)
+    assert cal_neg.min_rows == 1
+
+
 def test_pipeline_grouped_calibration_end_to_end():
     """LGBMPipeline + grouped calibrator: predict() reads size_col from X.
 
