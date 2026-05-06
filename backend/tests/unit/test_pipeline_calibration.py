@@ -481,5 +481,60 @@ def test_grouped_calibration_save_load_roundtrip():
     np.testing.assert_allclose(p_before, p_after, rtol=1e-12, atol=1e-12)
 
 
+# --- seed-based ensemble support -------------------------------------------
+
+
+def test_seed_propagates_to_lgb_params():
+    """Custom seed values flow into LightGBM params."""
+    cfg_default = TrainConfig(objective_type="binary")
+    cfg_custom = TrainConfig(objective_type="binary", seed=7)
+    cfg_rank = TrainConfig(objective_type="lambdarank", seed=99)
+    assert cfg_default.to_lgb_params()["seed"] == 42
+    assert cfg_custom.to_lgb_params()["seed"] == 7
+    assert cfg_rank.to_lgb_params()["seed"] == 99
+
+
+@pytest.mark.slow
+def test_different_seeds_produce_different_predictions():
+    """Two LGBMPipelines with different seeds disagree on at least some rows.
+
+    This validates that the seed actually plumbs through bagging /
+    feature_fraction sampling — the prerequisite for an ensemble that
+    averages over multiple seeds to reduce overfitting variance.
+    """
+    (X_tr, y_tr), _, (X_val, y_val) = _make_synthetic_binary(
+        n_train=2000, n_calib=1, n_val=1500,
+    )
+    base_kwargs = dict(
+        objective_type="binary",
+        num_boost_round=80,
+        early_stopping_rounds=20,
+        # Force sampling to actually take effect
+        bagging_fraction=0.5,
+        bagging_freq=1,
+        feature_fraction=0.5,
+    )
+    p_a = LGBMPipeline(config=TrainConfig(**base_kwargs, seed=42))
+    p_a.train(X_tr, y_tr, X_val, y_val)
+    p_b = LGBMPipeline(config=TrainConfig(**base_kwargs, seed=99))
+    p_b.train(X_tr, y_tr, X_val, y_val)
+
+    pred_a = p_a.predict(X_val)
+    pred_b = p_b.predict(X_val)
+    # At least 1% of rows must differ — sampling is stochastic
+    fraction_different = (np.abs(pred_a - pred_b) > 1e-6).mean()
+    assert fraction_different > 0.01, (
+        f"seeds 42 vs 99 produced near-identical predictions "
+        f"(only {fraction_different:.2%} differ)"
+    )
+
+
+def test_seed_default_preserves_historical_42():
+    """Default seed is 42 (the prior hardcoded value), so existing pkls
+    and reproductions continue to match bit-for-bit."""
+    cfg = TrainConfig()
+    assert cfg.seed == 42
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

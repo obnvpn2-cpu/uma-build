@@ -75,6 +75,11 @@ class TrainConfig:
     calibration_size_col: Optional[str] = None
     calibration_size_bins: Optional[List[List[int]]] = None
     calibration_per_size_min_rows: int = 500
+    # Seed for LightGBM (controls bagging / feature_fraction sampling).
+    # Used by ensemble callers that train multiple seeds and average
+    # predictions to reduce overfitting variance. Default 42 matches the
+    # historical hardcoded seed so existing models are bit-equivalent.
+    seed: int = 42
 
     def to_lgb_params(self) -> Dict[str, Any]:
         """Convert to LightGBM parameter dict."""
@@ -93,7 +98,7 @@ class TrainConfig:
                 "min_child_samples": self.min_child_samples,
                 "verbose": self.verbose,
                 "force_col_wise": True,
-                "seed": 42,
+                "seed": self.seed,
             }
         return {
             "objective": "binary",
@@ -108,7 +113,7 @@ class TrainConfig:
             "min_child_samples": self.min_child_samples,
             "verbose": self.verbose,
             "force_col_wise": True,
-            "seed": 42,
+            "seed": self.seed,
         }
 
 

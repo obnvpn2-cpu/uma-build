@@ -80,6 +80,7 @@ def load_predictions(
     features_mode: str = "small",
     per_size_calibration: bool = False,
     with_odds_aware: bool = False,
+    seeds: list[int] | None = None,
 ) -> tuple[pd.DataFrame, dict]:
     """Run walk_forward_cv and return (predictions_df, cv_metrics).
 
@@ -96,6 +97,11 @@ def load_predictions(
     races where every horse has nonzero `win_odds` (~17K of ~29K races).
     Popularity is *not* added — the goal is partial market info, not
     rank leakage.
+    ``seeds``: when provided as a list of >1 ints, runs walk_forward_cv
+    once per seed and averages `pred_prob` per (race_key, horse_key).
+    Reduces overfitting variance from feature/bagging sampling. Returns
+    cv_metrics from the first seed (a representative single-model
+    snapshot) plus an `ensemble.n_seeds` field.
     """
     df = pd.read_parquet(PARQUET, engine="pyarrow")
     # `select_columns` resolves selected feature IDs to column names via
@@ -138,15 +144,49 @@ def load_predictions(
             print("Mode: BINARY + isotonic per field_size bucket (8-12 / 13-16 / 17-18)")
         else:
             print("Mode: BINARY + isotonic calibration (calibrated probability)")
-        config = TrainConfig(**kwargs)
     else:
-        config = TrainConfig(num_boost_round=300, early_stopping_rounds=30)
+        kwargs = {"num_boost_round": 300, "early_stopping_rounds": 30}
         print("Mode: LAMBDARANK (rank score, requires per-race softmax)")
-    cv = walk_forward_cv(df, feature_cols, config=config, n_folds=3)
-    predictions_df = cv["predictions_df"]
+
+    seeds_list = seeds or [42]
+    if len(seeds_list) > 1:
+        print(f"Ensemble mode: averaging predictions over {len(seeds_list)} "
+              f"seeds {seeds_list}")
+        per_seed_preds = []
+        first_metrics = None
+        for s in seeds_list:
+            print(f"\n--- seed {s} ---")
+            cfg = TrainConfig(**{**kwargs, "seed": s})
+            cv = walk_forward_cv(df, feature_cols, config=cfg, n_folds=3)
+            per_seed_preds.append(cv["predictions_df"][[
+                "race_key", "horse_key", "pred_prob"
+            ]].rename(columns={"pred_prob": f"pred_prob_seed_{s}"}))
+            if first_metrics is None:
+                first_metrics = cv.get("cv_metrics", {})
+        merged = per_seed_preds[0]
+        for p in per_seed_preds[1:]:
+            merged = merged.merge(p, on=["race_key", "horse_key"], how="inner")
+        prob_cols = [c for c in merged.columns if c.startswith("pred_prob_seed_")]
+        merged["pred_prob"] = merged[prob_cols].mean(axis=1)
+        # Re-merge auxiliary columns from the last fold's predictions_df
+        # (cv_fold, target_win, etc.) so the downstream join still works.
+        last_full = cv["predictions_df"][[
+            c for c in cv["predictions_df"].columns
+            if c not in ("pred_prob",)
+        ]]
+        predictions_df = merged.merge(
+            last_full, on=["race_key", "horse_key"], how="inner"
+        )
+        cv_metrics = dict(first_metrics or {})
+        cv_metrics["ensemble"] = {"n_seeds": len(seeds_list), "seeds": seeds_list}
+    else:
+        config = TrainConfig(**{**kwargs, "seed": seeds_list[0]})
+        cv = walk_forward_cv(df, feature_cols, config=config, n_folds=3)
+        predictions_df = cv["predictions_df"]
+        cv_metrics = cv.get("cv_metrics", {})
     print(f"Predictions: {len(predictions_df)} rows over "
           f"{predictions_df['race_key'].nunique()} races")
-    return predictions_df, cv.get("cv_metrics", {})
+    return predictions_df, cv_metrics
 
 
 def load_odds() -> pd.DataFrame:
@@ -279,7 +319,16 @@ def main():
         "log_odds_gap_to_fav/mean, fuku_odds_uncertainty). Filters cache "
         "to races with valid odds (~17K of ~29K). Popularity is NOT added.",
     )
+    parser.add_argument(
+        "--seeds",
+        type=str,
+        default="42",
+        help="Comma-separated LightGBM seeds. >1 enables ensemble: each "
+        "seed trains its own walk_forward_cv pass and pred_prob is "
+        "averaged per (race_key, horse_key). Default '42' = single model.",
+    )
     args = parser.parse_args()
+    seeds_list = [int(s.strip()) for s in args.seeds.split(",") if s.strip()]
 
     print(f"DB:     {DB_PATH}")
     print(f"Cache:  {PARQUET}\n")
@@ -289,6 +338,7 @@ def main():
         features_mode=args.features,
         per_size_calibration=args.per_size_calibration,
         with_odds_aware=args.with_odds_aware,
+        seeds=seeds_list,
     )
     df = join_predictions_with_odds(preds)
     if args.use_calibrated:
@@ -443,6 +493,8 @@ def main():
             "features_mode": args.features,
             "per_size_calibration": bool(args.per_size_calibration),
             "with_odds_aware": bool(args.with_odds_aware),
+            "seeds": seeds_list,
+            "n_seeds": len(seeds_list),
             "cv_metrics": cv_metrics,
             "n_predictions": int(len(df)),
             "n_with_odds": int(df["tan_odds"].notna().sum()),
