@@ -63,12 +63,36 @@ export function useAuth() {
     []
   );
 
-  const signInWithGoogle = useCallback(async () => {
+  const signInWithGoogle = useCallback(async (next: string = "/lab") => {
+    // Route through /auth/callback so we have a single redirect URL to
+    // whitelist in Supabase + a place to surface OAuth errors. The
+    // callback reads `next` to forward the user back to where they
+    // wanted to land (default: /lab).
+    const callbackUrl = new URL("/auth/callback", window.location.origin);
+    callbackUrl.searchParams.set("next", next);
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${window.location.origin}/lab`,
+        redirectTo: callbackUrl.toString(),
       },
+    });
+    return { error };
+  }, []);
+
+  const resetPassword = useCallback(async (email: string) => {
+    // Sends a recovery email. The link in the email lands on
+    // /reset-password where the user can set a new password.
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+    return { error };
+  }, []);
+
+  const updatePassword = useCallback(async (newPassword: string) => {
+    // Used on the /reset-password page after the user clicks the
+    // recovery link (Supabase sets a temporary session automatically).
+    const { error } = await supabase.auth.updateUser({
+      password: newPassword,
     });
     return { error };
   }, []);
@@ -84,6 +108,8 @@ export function useAuth() {
     signInWithEmail,
     signUpWithEmail,
     signInWithGoogle,
+    resetPassword,
+    updatePassword,
     signOut,
   };
 }
