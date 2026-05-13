@@ -1,12 +1,30 @@
 import type { Metadata } from "next";
+import { JsonLd } from "@/components/seo/JsonLd";
+import { breadcrumbJsonLd } from "@/lib/seo";
 
 export const metadata: Metadata = {
   title: "利用規約 - UmaBuild",
+  description:
+    "UmaBuild の利用規約。サービス内容、禁止事項、免責事項、知的財産権、準拠法など、本サービスを利用する際の条件を定めています。",
+  alternates: { canonical: "/legal/terms" },
+  robots: { index: true, follow: true },
+  openGraph: {
+    title: "利用規約 - UmaBuild",
+    description: "UmaBuild サービスの利用条件を定めた規約ページ。",
+    url: "/legal/terms",
+    type: "article",
+  },
 };
 
 export default function TermsPage() {
   return (
     <div className="max-w-3xl mx-auto px-4 py-10 space-y-8">
+      <JsonLd
+        data={breadcrumbJsonLd([
+          { name: "ホーム", url: "/" },
+          { name: "利用規約", url: "/legal/terms" },
+        ])}
+      />
       <h1 className="font-mincho text-2xl font-bold text-accent text-glow-yellow">
         利用規約
       </h1>

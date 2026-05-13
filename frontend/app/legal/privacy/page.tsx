@@ -1,12 +1,30 @@
 import type { Metadata } from "next";
+import { JsonLd } from "@/components/seo/JsonLd";
+import { breadcrumbJsonLd } from "@/lib/seo";
 
 export const metadata: Metadata = {
   title: "プライバシーポリシー - UmaBuild",
+  description:
+    "UmaBuild のプライバシーポリシー。収集する情報、利用目的、第三者提供、Cookie、安全管理など、個人情報の取り扱い方針を記載しています。",
+  alternates: { canonical: "/legal/privacy" },
+  robots: { index: true, follow: true },
+  openGraph: {
+    title: "プライバシーポリシー - UmaBuild",
+    description: "UmaBuild における個人情報の取り扱い方針。",
+    url: "/legal/privacy",
+    type: "article",
+  },
 };
 
 export default function PrivacyPage() {
   return (
     <div className="max-w-3xl mx-auto px-4 py-10 space-y-8">
+      <JsonLd
+        data={breadcrumbJsonLd([
+          { name: "ホーム", url: "/" },
+          { name: "プライバシーポリシー", url: "/legal/privacy" },
+        ])}
+      />
       <h1 className="font-mincho text-2xl font-bold text-accent text-glow-yellow">
         プライバシーポリシー
       </h1>

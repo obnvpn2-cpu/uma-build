@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import {
   MousePointerClick,
@@ -9,22 +10,13 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { FAQAccordion } from "@/components/lp/FAQAccordion";
+import { faqs } from "@/components/lp/faqs";
 import { CtaLink } from "@/components/lp/CtaLink";
+import { JsonLd } from "@/components/seo/JsonLd";
+import { softwareAppJsonLd, faqPageJsonLd } from "@/lib/seo";
 
-/* ── JSON-LD structured data ── */
-const jsonLd = {
-  "@context": "https://schema.org",
-  "@type": "SoftwareApplication",
-  name: "UmaBuild",
-  applicationCategory: "UtilitiesApplication",
-  operatingSystem: "Web",
-  offers: [
-    { "@type": "Offer", price: "0", priceCurrency: "JPY" },
-    { "@type": "Offer", price: "1480", priceCurrency: "JPY" },
-  ],
-  description:
-    "競馬の予想AIをプログラミングなしで作れるWebサービス。81の特徴量から選ぶだけで、LightGBMモデルを自動学習し、バックテストで回収率を即確認。",
-  url: "https://uma-build.vercel.app",
+export const metadata: Metadata = {
+  alternates: { canonical: "/" },
 };
 
 /* ── Static data ── */
@@ -75,10 +67,7 @@ const comparisonRows = [
 export default function LandingPage() {
   return (
     <>
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
-      />
+      <JsonLd data={softwareAppJsonLd} />
 
       {/* ━━ Hero ━━ */}
       <section className="relative min-h-[calc(100vh-3.5rem)] flex items-center overflow-hidden">
@@ -188,7 +177,7 @@ export default function LandingPage() {
             <span className="text-accent text-glow-yellow">3ステップ</span>
             で、
             <br className="sm:hidden" />
-            あなただけのAIが完成
+            あなただけの競馬AIが完成
           </h2>
           <p className="text-text-secondary text-center mb-14 max-w-lg mx-auto">
             専門知識は不要。クリック操作だけで、本格的な競馬AIを構築できます。
@@ -227,12 +216,12 @@ export default function LandingPage() {
                   BACKTEST RESULTS
                 </p>
                 <h2 className="font-mincho text-3xl sm:text-4xl font-bold leading-snug">
-                  こんな分析結果が、
-                  <span className="text-accent text-glow-yellow">ワンクリック</span>
-                  で。
+                  バックテストで
+                  <span className="text-accent text-glow-yellow">回収率</span>
+                  を即確認
                 </h2>
                 <p className="text-text-secondary mt-4">
-                  バックテストで過去レースの回収率を即座に算出します。
+                  こんな分析結果が、ワンクリックで。過去レースの回収率を即座に算出します。
                 </p>
               </div>
 
@@ -389,6 +378,7 @@ export default function LandingPage() {
 
       {/* ━━ FAQ ━━ */}
       <section className="py-24 sm:py-32">
+        <JsonLd data={faqPageJsonLd(faqs)} />
         <div className="max-w-3xl mx-auto px-4">
           <h2 className="font-mincho text-3xl sm:text-4xl font-bold text-center mb-14">
             よくある質問

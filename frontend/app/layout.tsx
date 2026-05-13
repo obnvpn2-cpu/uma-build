@@ -5,9 +5,14 @@ import "./globals.css";
 import { Providers } from "./providers";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
+import { JsonLd } from "@/components/seo/JsonLd";
+import { organizationJsonLd } from "@/lib/seo";
 
 const gtmRaw = process.env.NEXT_PUBLIC_GTM_ID;
 const GTM_ID = gtmRaw && /^GTM-[A-Z0-9]+$/.test(gtmRaw) ? gtmRaw : undefined;
+
+const googleSiteVerification = process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION;
+const bingSiteVerification = process.env.NEXT_PUBLIC_BING_SITE_VERIFICATION;
 
 const notoSansJP = Noto_Sans_JP({
   subsets: ["latin"],
@@ -62,6 +67,12 @@ export const metadata: Metadata = {
     description:
       "競馬の予想AIをプログラミングなしで作れる。81の特徴量から選ぶだけで、LightGBMが自動学習。",
   },
+  ...(googleSiteVerification && {
+    verification: { google: googleSiteVerification },
+  }),
+  ...(bingSiteVerification && {
+    other: { "msvalidate.01": bingSiteVerification },
+  }),
 };
 
 export default function RootLayout({
@@ -95,6 +106,7 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
             </noscript>
           </>
         )}
+        <JsonLd data={organizationJsonLd} />
         <Providers>
           <Header />
           <main className="flex-1">{children}</main>

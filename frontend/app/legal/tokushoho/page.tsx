@@ -1,12 +1,30 @@
 import type { Metadata } from "next";
+import { JsonLd } from "@/components/seo/JsonLd";
+import { breadcrumbJsonLd } from "@/lib/seo";
 
 export const metadata: Metadata = {
   title: "特定商取引法に基づく表記 - UmaBuild",
+  description:
+    "UmaBuild の特定商取引法に基づく表記。販売業者、販売価格、支払方法、サービス提供時期、返品・キャンセルポリシー等を記載しています。",
+  alternates: { canonical: "/legal/tokushoho" },
+  robots: { index: true, follow: true },
+  openGraph: {
+    title: "特定商取引法に基づく表記 - UmaBuild",
+    description: "UmaBuild の特定商取引法に基づく表記。",
+    url: "/legal/tokushoho",
+    type: "article",
+  },
 };
 
 export default function TokushohoPage() {
   return (
     <div className="max-w-3xl mx-auto px-4 py-10 space-y-8">
+      <JsonLd
+        data={breadcrumbJsonLd([
+          { name: "ホーム", url: "/" },
+          { name: "特定商取引法に基づく表記", url: "/legal/tokushoho" },
+        ])}
+      />
       <h1 className="font-mincho text-2xl font-bold text-accent text-glow-yellow">
         特定商取引法に基づく表記
       </h1>
